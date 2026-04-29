@@ -1,5 +1,7 @@
 # nix-vulnix-nvd-mirror
 
+[![Mirror NVD feeds](https://github.com/pr0d1r2/nix-vulnix-nvd-mirror/actions/workflows/mirror.yml/badge.svg)](https://github.com/pr0d1r2/nix-vulnix-nvd-mirror/actions/workflows/mirror.yml)
+
 GitHub Pages mirror of NVD JSON feeds for use with
 [vulnix](https://github.com/nix-community/vulnix).
 
