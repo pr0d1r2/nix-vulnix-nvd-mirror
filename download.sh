@@ -6,7 +6,7 @@ outdir="public"
 current_year=$(date +%Y)
 start_year=$((current_year - 5))
 max_retries=3
-base_delay=15
+base_delay=60
 
 mkdir -p "$outdir"
 
@@ -16,7 +16,7 @@ download_with_retry() {
     local attempt=1
 
     while [ "$attempt" -le "$max_retries" ]; do
-        if curl -fsSL --retry 3 --retry-delay 5 -o "$dest" "$url"; then
+        if curl -fsSL --retry 3 --retry-delay 60 --max-time 300 -o "$dest" "$url"; then
             echo "OK: $(basename "$dest")"
             return 0
         fi
