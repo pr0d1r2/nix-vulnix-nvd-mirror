@@ -1,0 +1,27 @@
+---
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pr0d1r2/nix-lefthook-ci-action@fc0c391434c5603e8289549b3cc91f922896cc51
+        with:
+          skip-build: 'true'
+
+  build-macos:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pr0d1r2/nix-lefthook-ci-action@fc0c391434c5603e8289549b3cc91f922896cc51
+        with:
+          skip-build: 'true'
