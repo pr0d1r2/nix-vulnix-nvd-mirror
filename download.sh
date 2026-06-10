@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 mirror="${NVD_MIRROR_URL:-https://nvd.nist.gov/feeds/json/cve/2.0}"
 outdir="public"
