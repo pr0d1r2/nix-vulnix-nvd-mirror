@@ -9,6 +9,8 @@ max_retries=3
 base_delay=60
 
 mkdir -p "$outdir"
+checksum_file="$outdir/sha256sums.txt"
+: > "$checksum_file"
 
 cleanup_on_failure() {
     echo "Download failed; removing partial output directory" >&2
@@ -23,7 +25,10 @@ download_with_retry() {
 
     while [ "$attempt" -le "$max_retries" ]; do
         if curl -fsSL --retry 3 --retry-delay 60 --max-time 300 -o "$dest" "$url" && gzip -t "$dest"; then
-            echo "OK: $(basename "$dest")"
+            local checksum
+            checksum=$(sha256sum "$dest" | cut -d' ' -f1)
+            echo "$checksum  $(basename "$dest")" >> "$checksum_file"
+            echo "OK: $(basename "$dest") (SHA256: $checksum)"
             return 0
         fi
         rm -f "$dest"
@@ -47,5 +52,8 @@ done
 download_with_retry \
     "$mirror/nvdcve-2.0-modified.json.gz" \
     "$outdir/nvdcve-2.0-modified.json.gz"
+
+echo "Verifying checksums..."
+(cd "$outdir" && sha256sum -c sha256sums.txt)
 
 echo "Mirror complete: $(find "$outdir" -maxdepth 1 -name '*.json.gz' | wc -l) feeds downloaded"

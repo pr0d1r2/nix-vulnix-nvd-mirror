@@ -98,7 +98,7 @@ RTK filter configuration (schema version 1, currently empty filters).
 | status | id | goal |
 |--------|----|------|
 | `x` | T1 | Add a `shellcheck` lint step to the CI workflow to validate `download.sh` |
-| `.` | T2 | Add integrity verification (checksum/SHA256) for downloaded feed files |
+| `x` | T2 | Add integrity verification (checksum/SHA256) for downloaded feed files |
 | `.` | T3 | Add a `test_download.sh` script that validates the script logic (mock curl, check retry behavior, verify year range) |
 | `x` | T4 | Make `mirror` base URL configurable via environment variable for alternate NVD mirrors |
 | `.` | T5 | Add a health-check step in CI that verifies the deployed Pages endpoint returns valid gzip files |
