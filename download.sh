@@ -10,6 +10,12 @@ base_delay=60
 
 mkdir -p "$outdir"
 
+cleanup_on_failure() {
+    echo "Download failed; removing partial output directory" >&2
+    rm -rf "$outdir"
+}
+trap cleanup_on_failure ERR
+
 download_with_retry() {
     local url="$1"
     local dest="$2"
@@ -20,6 +26,7 @@ download_with_retry() {
             echo "OK: $(basename "$dest")"
             return 0
         fi
+        rm -f "$dest"
         if [ "$attempt" -eq "$max_retries" ]; then
             echo "FAIL: $url after $max_retries attempts" >&2
             return 1
