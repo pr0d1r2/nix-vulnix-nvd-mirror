@@ -112,7 +112,7 @@ RTK filter configuration (schema version 1, currently empty filters).
 | `x` | T8 | Add concurrency control to the workflow to cancel in-progress runs when a new one starts |
 | `x` | T9 | Add error notification (e.g., GitHub Actions failure badge or Slack webhook) on download failures |
 | `x` | T10 | Pin `peaceiris/actions-gh-pages` to a specific SHA for supply-chain security |
-| `.` | T11 | Add a `flake.nix` exposing `packages.<system>.nvd-cache` — a derivation that compiles the mirrored feeds into a pre-built vulnix database (`Data.fs`) store path, so consumers get zero-download and zero-compile |
+| `x` | T11 | Add a `flake.nix` exposing `packages.<system>.nvd-cache` — a derivation that compiles the mirrored feeds into a pre-built vulnix database (`Data.fs`) store path, so consumers get zero-download and zero-compile |
 | `.` | T12 | Build and push `nvd-cache` to a public Cachix binary cache from the daily workflow, so downstream consumers fetch the store path as a substitute |
 | `.` | T13 | Document consumer usage of the pre-built cache (`vulnix -c <store-path>`), with examples for cold/ephemeral builders and live-ISO smoke seeding |
 | `.` | T14 | Provide a Nix consumer helper (overlay or `nixosModules`) that wires `nvd-cache` into `/var/cache/vulnix` declaratively |
