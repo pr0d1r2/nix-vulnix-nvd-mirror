@@ -20,8 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      - name: Lint download.sh
-        run: shellcheck download.sh
+      - name: Lint shell scripts
+        run: shellcheck download.sh health_check.sh
 
       - name: Download NVD feeds
         run: bash download.sh
@@ -32,3 +32,8 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
           force_orphan: true
+
+      - name: Health-check deployed Pages
+        run: bash health_check.sh
+        env:
+          PAGES_URL: https://pr0d1r2.github.io/nix-vulnix-nvd-mirror
