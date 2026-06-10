@@ -5,6 +5,7 @@
 - **Bash** 4.0+
 - **ShellCheck** for linting (`apt install shellcheck` / `nix-shell -p shellcheck`)
 - **curl** and **gzip** (used by the download and health-check scripts)
+- **jq** for JSON processing of NVD API 2.0 responses (`apt install jq` / `nix-shell -p jq`)
 - **GNU coreutils** (`sha256sum`, `seq`, `date`)
 
 ## Repository layout
@@ -62,10 +63,16 @@ CI runs this check before every deployment.
 bash download.sh
 ```
 
-Downloaded feeds land in `public/`. Override the NVD base URL with:
+Downloaded feeds land in `public/`. Override the NVD API URL with:
 
 ```
-NVD_MIRROR_URL=https://your-mirror.example.com/feeds/json/cve/2.0 bash download.sh
+NVD_MIRROR_URL=https://your-api.example.com/rest/json/cves/2.0 bash download.sh
+```
+
+Optionally set an NVD API key to increase rate limits:
+
+```
+NVD_API_KEY=your-key-here bash download.sh
 ```
 
 ## Contribution guidelines
