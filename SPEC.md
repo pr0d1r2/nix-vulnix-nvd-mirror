@@ -6,7 +6,7 @@ A GitHub Pages mirror of NVD (National Vulnerability Database) JSON feeds for us
 
 ## §V — Invariants
 
-1. `download.sh` must exit on any error (`set -euo pipefail`).
+1. `download.sh` must exit on any error (`set -Eeuo pipefail`; `-E` ensures the ERR trap propagates into functions).
 2. `download.sh` must download feeds for a rolling 6-year window: `(current_year - 5)` through `current_year`, plus the `modified` feed.
 3. Each download must retry up to 3 times with exponential backoff (60s, 120s base delays) before failing.
 4. `curl` invocations must use `--retry 3 --retry-delay 60 --max-time 300` for network resilience.
