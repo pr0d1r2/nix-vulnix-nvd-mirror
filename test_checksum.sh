@@ -11,22 +11,45 @@ failed=0
 pass() { echo "PASS: $1"; passed=$((passed + 1)); }
 fail() { echo "FAIL: $1" >&2; failed=$((failed + 1)); }
 
-# Create valid .json.gz feed files to serve via file://
-FEED_DIR="$WORK_DIR/feeds"
-mkdir -p "$FEED_DIR"
-
 current_year=$(date +%Y)
 start_year=$((current_year - 5))
 
-for year in $(seq "$start_year" "$current_year"); do
-    echo "{\"CVE_Items\": [], \"year\": $year}" | gzip > "$FEED_DIR/nvdcve-2.0-${year}.json.gz"
-done
-echo '{"CVE_Items": [], "feed": "modified"}' | gzip > "$FEED_DIR/nvdcve-2.0-modified.json.gz"
+# Set up mock curl that returns valid NVD API 2.0 JSON responses
+MOCK_BIN="$WORK_DIR/mock_bin"
+mkdir -p "$MOCK_BIN"
 
-# Run download.sh with file:// mirror
-export NVD_MIRROR_URL="file://$FEED_DIR"
+cat > "$MOCK_BIN/curl" <<'MOCK'
+#!/usr/bin/env bash
+dest=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o) dest="$2"; shift 2 ;;
+        -H) shift 2 ;;
+        --retry|--retry-delay|--max-time) shift 2 ;;
+        -*) shift ;;
+        *) shift ;;
+    esac
+done
+echo '{"totalResults": 1, "resultsPerPage": 1, "startIndex": 0, "vulnerabilities": [{"cve": {"id": "CVE-2024-0001"}}]}' > "$dest"
+exit 0
+MOCK
+chmod +x "$MOCK_BIN/curl"
+
+cat > "$MOCK_BIN/sleep" <<'MOCK'
+#!/usr/bin/env bash
+:
+MOCK
+chmod +x "$MOCK_BIN/sleep"
+
+# Run download.sh with mock curl
+(
+    export PATH="$MOCK_BIN:$PATH"
+    export NVD_MIRROR_URL="http://mock.test/api"
+    export NVD_RATE_DELAY=0
+    cd "$WORK_DIR"
+    bash "$SCRIPT_DIR/download.sh"
+)
 cd "$WORK_DIR"
-bash "$SCRIPT_DIR/download.sh"
 
 # T1: sha256sums.txt is generated
 if [ -f "public/sha256sums.txt" ]; then

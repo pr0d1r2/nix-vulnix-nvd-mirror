@@ -25,6 +25,7 @@ url=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -o) dest="$2"; shift 2 ;;
+        -H) shift 2 ;;
         --retry|--retry-delay|--max-time) shift 2 ;;
         -*) shift ;;
         *) url="$1"; shift ;;
@@ -32,7 +33,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "$url" >> "${MOCK_CURL_STATE_DIR}/urls.log"
-echo "$*" >> "${MOCK_CURL_STATE_DIR}/raw_args.log" || true
 
 url_key=$(echo "$url" | tr -c '[:alnum:]' '_')
 count_file="${MOCK_CURL_STATE_DIR}/count_${url_key}"
@@ -53,19 +53,19 @@ case "$mode" in
         if [[ "$count" -le "$fail_count" ]]; then
             exit 1
         fi
-        echo '{"CVE_Items": []}' | gzip > "$dest"
+        echo '{"totalResults": 0, "resultsPerPage": 0, "startIndex": 0, "vulnerabilities": []}' > "$dest"
         exit 0
         ;;
     corrupt_then_valid)
         if [[ "$count" -le "$fail_count" ]]; then
-            echo "corrupt data not gzip" > "$dest"
+            echo "corrupt data not json" > "$dest"
             exit 0
         fi
-        echo '{"CVE_Items": []}' | gzip > "$dest"
+        echo '{"totalResults": 0, "resultsPerPage": 0, "startIndex": 0, "vulnerabilities": []}' > "$dest"
         exit 0
         ;;
     *)
-        echo '{"CVE_Items": []}' | gzip > "$dest"
+        echo '{"totalResults": 0, "resultsPerPage": 0, "startIndex": 0, "vulnerabilities": []}' > "$dest"
         exit 0
         ;;
 esac
@@ -97,7 +97,8 @@ run_download() {
         export MOCK_CURL_MODE="${MOCK_CURL_MODE:-success}"
         export MOCK_CURL_FAIL_COUNT="${MOCK_CURL_FAIL_COUNT:-0}"
         export MOCK_SLEEP_LOG="$sleep_log"
-        export NVD_MIRROR_URL="${NVD_MIRROR_URL:-http://mock.test/feeds}"
+        export NVD_MIRROR_URL="${NVD_MIRROR_URL:-http://mock.test/api}"
+        export NVD_RATE_DELAY=0
         cd "$run_dir"
         bash "$SCRIPT_DIR/download.sh"
     )
@@ -166,7 +167,7 @@ test_mirror_url_override() {
     NVD_MIRROR_URL="http://custom.mirror/nvd" run_download "$test_dir"
 
     local state_dir="$test_dir/state"
-    if grep -q "^http://custom.mirror/nvd/" "$state_dir/urls.log"; then
+    if grep -q "^http://custom.mirror/nvd?" "$state_dir/urls.log"; then
         pass "mirror URL override: curl called with custom URL"
     else
         fail "mirror URL override: custom URL not found in curl calls"
@@ -249,7 +250,7 @@ test_max_retries_cleanup() {
     fi
 }
 
-# ── Test 7: Corrupt gzip triggers retry ────────────────────────────────────
+# ── Test 7: Invalid JSON response triggers retry ──────────────────────────
 
 test_corrupt_gzip_retry() {
     local test_dir="$WORK_DIR/test_corrupt_gzip"
@@ -295,12 +296,13 @@ dest=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -o) dest="$2"; shift 2 ;;
+        -H) shift 2 ;;
         --retry|--retry-delay|--max-time) shift 2 ;;
         -*) shift ;;
         *) shift ;;
     esac
 done
-echo '{"CVE_Items": []}' | gzip > "$dest"
+echo '{"totalResults": 0, "resultsPerPage": 0, "startIndex": 0, "vulnerabilities": []}' > "$dest"
 FLAGCURL
     chmod +x "$mock_bin/curl"
 
@@ -318,7 +320,8 @@ SLEEPSTUB
         export PATH="$mock_bin:$PATH"
         export MOCK_CURL_STATE_DIR="$state_dir"
         export MOCK_SLEEP_LOG="$test_dir/sleep.log"
-        export NVD_MIRROR_URL="http://mock.test/feeds"
+        export NVD_MIRROR_URL="http://mock.test/api"
+        export NVD_RATE_DELAY=0
         cd "$run_dir"
         bash "$SCRIPT_DIR/download.sh"
     )
@@ -346,6 +349,139 @@ SLEEPSTUB
     fi
 }
 
+# ── Test 9: API pagination fetches all pages ───────────────────────────────
+
+test_api_pagination() {
+    local test_dir="$WORK_DIR/test_pagination"
+    mkdir -p "$test_dir"
+
+    local mock_bin="$WORK_DIR/mock_bin_pagination"
+    mkdir -p "$mock_bin"
+
+    cat > "$mock_bin/curl" <<'PAGECURL'
+#!/usr/bin/env bash
+dest=""
+url=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o) dest="$2"; shift 2 ;;
+        -H) shift 2 ;;
+        --retry|--retry-delay|--max-time) shift 2 ;;
+        -*) shift ;;
+        *) url="$1"; shift ;;
+    esac
+done
+
+echo "$url" >> "${MOCK_CURL_STATE_DIR}/urls.log"
+
+start_index=0
+if [[ "$url" =~ startIndex=([0-9]+) ]]; then
+    start_index="${BASH_REMATCH[1]}"
+fi
+
+if [ "$start_index" -eq 0 ]; then
+    echo '{"totalResults": 2, "resultsPerPage": 1, "startIndex": 0, "vulnerabilities": [{"cve": {"id": "CVE-0001"}}]}' > "$dest"
+else
+    echo '{"totalResults": 2, "resultsPerPage": 1, "startIndex": 1, "vulnerabilities": [{"cve": {"id": "CVE-0002"}}]}' > "$dest"
+fi
+PAGECURL
+    chmod +x "$mock_bin/curl"
+
+    cat > "$mock_bin/sleep" <<'SLEEPSTUB'
+#!/usr/bin/env bash
+:
+SLEEPSTUB
+    chmod +x "$mock_bin/sleep"
+
+    local state_dir="$test_dir/state"
+    local run_dir="$test_dir/run"
+    mkdir -p "$state_dir" "$run_dir"
+
+    (
+        export PATH="$mock_bin:$PATH"
+        export MOCK_CURL_STATE_DIR="$state_dir"
+        export NVD_MIRROR_URL="http://mock.test/api"
+        export NVD_RESULTS_PER_PAGE=1
+        export NVD_RATE_DELAY=0
+        cd "$run_dir"
+        bash "$SCRIPT_DIR/download.sh"
+    )
+
+    local url_count
+    url_count=$(wc -l < "$state_dir/urls.log")
+    local expected_feeds=$((current_year - start_year + 1 + 1))
+    local expected_calls=$((expected_feeds * 2))
+
+    if [[ "$url_count" -eq "$expected_calls" ]]; then
+        pass "API pagination: $expected_calls API calls for $expected_feeds feeds (2 pages each)"
+    else
+        fail "API pagination: expected $expected_calls API calls, got $url_count"
+    fi
+
+    local first_feed="$run_dir/public/nvdcve-2.0-${start_year}.json.gz"
+    local vuln_count
+    vuln_count=$(zcat "$first_feed" | jq '.vulnerabilities | length')
+    if [[ "$vuln_count" -eq 2 ]]; then
+        pass "API pagination: all vulnerabilities aggregated across pages"
+    else
+        fail "API pagination: expected 2 vulnerabilities, got $vuln_count"
+    fi
+}
+
+# ── Test 10: NVD_API_KEY is sent as request header ─────────────────────────
+
+test_api_key_header() {
+    local test_dir="$WORK_DIR/test_api_key"
+    mkdir -p "$test_dir"
+
+    local mock_bin="$WORK_DIR/mock_bin_apikey"
+    mkdir -p "$mock_bin"
+
+    cat > "$mock_bin/curl" <<'KEYCURL'
+#!/usr/bin/env bash
+echo "$@" >> "${MOCK_CURL_STATE_DIR}/full_args.log"
+dest=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o) dest="$2"; shift 2 ;;
+        -H) shift 2 ;;
+        --retry|--retry-delay|--max-time) shift 2 ;;
+        -*) shift ;;
+        *) shift ;;
+    esac
+done
+echo '{"totalResults": 0, "resultsPerPage": 0, "startIndex": 0, "vulnerabilities": []}' > "$dest"
+KEYCURL
+    chmod +x "$mock_bin/curl"
+
+    cat > "$mock_bin/sleep" <<'SLEEPSTUB'
+#!/usr/bin/env bash
+:
+SLEEPSTUB
+    chmod +x "$mock_bin/sleep"
+
+    local state_dir="$test_dir/state"
+    local run_dir="$test_dir/run"
+    mkdir -p "$state_dir" "$run_dir"
+
+    (
+        export PATH="$mock_bin:$PATH"
+        export MOCK_CURL_STATE_DIR="$state_dir"
+        export NVD_MIRROR_URL="http://mock.test/api"
+        export NVD_API_KEY="test-key-abc123"
+        export NVD_RATE_DELAY=0
+        cd "$run_dir"
+        bash "$SCRIPT_DIR/download.sh"
+    )
+
+    local args_log="$state_dir/full_args.log"
+    if grep -q 'apiKey: test-key-abc123' "$args_log"; then
+        pass "API key header: apiKey header sent with curl"
+    else
+        fail "API key header: expected apiKey header in curl args"
+    fi
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "=== test_download.sh ==="
@@ -359,6 +495,8 @@ test_retry_succeeds
 test_max_retries_cleanup
 test_corrupt_gzip_retry
 test_curl_flags
+test_api_pagination
+test_api_key_header
 
 echo ""
 echo "Results: $passed passed, $failed failed"
