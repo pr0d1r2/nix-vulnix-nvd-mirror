@@ -24,9 +24,22 @@ jobs:
         run: shellcheck download.sh health_check.sh
 
       - name: Download NVD feeds
+        id: download
         run: bash download.sh
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+
+      - name: Notify on download failure
+        if: failure() && steps.download.outcome == 'failure'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+            curl -fsSL --max-time 30 -X POST \
+              -H 'Content-Type: application/json' \
+              -d "{\"text\":\"NVD mirror download failed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+              "$SLACK_WEBHOOK_URL" || true
+          fi
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0

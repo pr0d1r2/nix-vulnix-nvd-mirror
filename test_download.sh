@@ -34,6 +34,11 @@ done
 
 echo "$url" >> "${MOCK_CURL_STATE_DIR}/urls.log"
 
+if [[ -z "$dest" ]]; then
+    echo "$url" >> "${MOCK_CURL_STATE_DIR}/notifications.log"
+    exit 0
+fi
+
 url_key=$(echo "$url" | tr -c '[:alnum:]' '_')
 count_file="${MOCK_CURL_STATE_DIR}/count_${url_key}"
 count=1
@@ -99,6 +104,7 @@ run_download() {
         export MOCK_SLEEP_LOG="$sleep_log"
         export NVD_MIRROR_URL="${NVD_MIRROR_URL:-http://mock.test/api}"
         export NVD_RATE_DELAY=0
+        export NOTIFICATION_WEBHOOK_URL="${NOTIFICATION_WEBHOOK_URL:-}"
         cd "$run_dir"
         bash "$SCRIPT_DIR/download.sh"
     )
@@ -482,6 +488,48 @@ SLEEPSTUB
     fi
 }
 
+# ── Test 11: Notification webhook called on download failure ──────────────
+
+test_notification_on_failure() {
+    local test_dir="$WORK_DIR/test_notification_failure"
+    mkdir -p "$test_dir"
+
+    local exit_code=0
+    MOCK_CURL_MODE="fail_always" NOTIFICATION_WEBHOOK_URL="http://hooks.test/notify" \
+        run_download "$test_dir" 2>/dev/null || exit_code=$?
+
+    if [[ "$exit_code" -ne 0 ]]; then
+        pass "notification on failure: script exits with non-zero status"
+    else
+        fail "notification on failure: script should have failed"
+    fi
+
+    local state_dir="$test_dir/state"
+    if [[ -f "$state_dir/notifications.log" ]] && grep -q "http://hooks.test/notify" "$state_dir/notifications.log"; then
+        pass "notification on failure: webhook called on download failure"
+    else
+        fail "notification on failure: webhook not called"
+    fi
+}
+
+# ── Test 12: No notification when webhook URL is not set ─────────────────
+
+test_no_notification_without_webhook() {
+    local test_dir="$WORK_DIR/test_no_notification"
+    mkdir -p "$test_dir"
+
+    local exit_code=0
+    MOCK_CURL_MODE="fail_always" \
+        run_download "$test_dir" 2>/dev/null || exit_code=$?
+
+    local state_dir="$test_dir/state"
+    if [[ ! -f "$state_dir/notifications.log" ]]; then
+        pass "no notification without webhook: no webhook call when URL not set"
+    else
+        fail "no notification without webhook: unexpected webhook call"
+    fi
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "=== test_download.sh ==="
@@ -497,6 +545,8 @@ test_corrupt_gzip_retry
 test_curl_flags
 test_api_pagination
 test_api_key_header
+test_notification_on_failure
+test_no_notification_without_webhook
 
 echo ""
 echo "Results: $passed passed, $failed failed"

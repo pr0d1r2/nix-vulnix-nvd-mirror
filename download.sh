@@ -9,6 +9,17 @@ max_retries=3
 base_delay=60
 results_per_page="${NVD_RESULTS_PER_PAGE:-2000}"
 rate_delay="${NVD_RATE_DELAY:-6}"
+notification_webhook_url="${NOTIFICATION_WEBHOOK_URL:-}"
+
+send_failure_notification() {
+    if [ -z "$notification_webhook_url" ]; then
+        return 0
+    fi
+    curl -fsSL --max-time 30 -X POST \
+        -H 'Content-Type: application/json' \
+        -d "{\"text\":\"NVD mirror download failed at $(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+        "$notification_webhook_url" >/dev/null 2>&1 || true
+}
 
 mkdir -p "$outdir"
 checksum_file="$outdir/sha256sums.txt"
@@ -16,6 +27,7 @@ checksum_file="$outdir/sha256sums.txt"
 
 cleanup_on_failure() {
     echo "Download failed; removing partial output directory" >&2
+    send_failure_notification
     rm -rf "$outdir"
 }
 trap cleanup_on_failure ERR
