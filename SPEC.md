@@ -101,7 +101,7 @@ RTK filter configuration (schema version 1, currently empty filters).
 | `x` | T2 | Add integrity verification (checksum/SHA256) for downloaded feed files |
 | `x` | T3 | Add a `test_download.sh` script that validates the script logic (mock curl, check retry behavior, verify year range) |
 | `x` | T4 | Make `mirror` base URL configurable via environment variable for alternate NVD mirrors |
-| `.` | T5 | Add a health-check step in CI that verifies the deployed Pages endpoint returns valid gzip files |
+| `x` | T5 | Add a health-check step in CI that verifies the deployed Pages endpoint returns valid gzip files |
 | `.` | T6 | Add `CONTRIBUTING.md` with development setup and contribution guidelines |
 | `.` | T7 | Migrate from NVD 2.0 JSON feeds to the NVD API 2.0 (CVE Change History API), as NIST has deprecated the legacy feed format |
 | `x` | T8 | Add concurrency control to the workflow to cancel in-progress runs when a new one starts |
