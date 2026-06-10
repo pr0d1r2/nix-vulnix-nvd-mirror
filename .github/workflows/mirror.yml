@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: mirror-deploy
+  cancel-in-progress: true
+
 jobs:
   mirror:
     runs-on: ubuntu-latest
