@@ -19,6 +19,7 @@ A GitHub Pages mirror of NVD (National Vulnerability Database) JSON feeds for us
 11. All GitHub Actions are pinned to full commit SHAs (not mutable tags) for supply-chain security.
 12. The workflow uses a concurrency group (`mirror-deploy`) with `cancel-in-progress: true` to prevent overlapping deployments.
 13. On download failure, an ERR trap removes the `public/` directory to prevent deploying an incomplete feed set.
+14. Each downloaded `.json.gz` file is verified with `gzip -t` before being accepted; corrupt files trigger a retry.
 
 ## §I — Interfaces
 
@@ -43,7 +44,7 @@ bash download.sh
 **Functions:**
 
 - `cleanup_on_failure() -> void` — ERR trap handler that removes the output directory on failure, preventing deployment of incomplete feeds.
-- `download_with_retry(url: string, dest: string) -> 0 | 1` — Downloads a single URL to a destination path with retry/backoff logic. Removes partial files between retries. Prints `OK: <filename>` on success to stdout; prints `FAIL: <url>` and `Retry ...` messages to stderr.
+- `download_with_retry(url: string, dest: string) -> 0 | 1` — Downloads a single URL to a destination path with retry/backoff logic. Verifies gzip integrity (`gzip -t`) after each download; a failed check triggers a retry. Removes partial files between retries. Prints `OK: <filename>` on success to stdout; prints `FAIL: <url>` and `Retry ...` messages to stderr.
 
 **Output artifacts:**
 
@@ -90,5 +91,5 @@ RTK filter configuration (schema version 1, currently empty filters).
 ## §B — Bugs / Known Issues
 
 1. **Deprecated NVD feed format.** The script uses `https://nvd.nist.gov/feeds/json/cve/2.0` which NIST deprecated in favor of the NVD API 2.0. These feeds may stop working or become stale at any time.
-2. **No integrity verification.** Downloaded `.json.gz` files are not verified against checksums or signatures; a corrupted download could be deployed.
+2. **No cryptographic verification.** Downloaded `.json.gz` files are verified for gzip integrity (`gzip -t`), but NVD legacy feeds do not provide checksums or signatures for independent authenticity verification.
 3. **No tests.** The project has zero automated tests for the download script's logic (retry behavior, year range calculation, error handling).
