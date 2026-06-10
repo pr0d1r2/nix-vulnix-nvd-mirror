@@ -20,6 +20,7 @@ download_with_retry() {
     local url="$1"
     local dest="$2"
     local attempt=1
+    local delay
 
     while [ "$attempt" -le "$max_retries" ]; do
         if curl -fsSL --retry 3 --retry-delay 60 --max-time 300 -o "$dest" "$url" && gzip -t "$dest"; then
