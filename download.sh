@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mirror="https://nvd.nist.gov/feeds/json/cve/2.0"
+mirror="${NVD_MIRROR_URL:-https://nvd.nist.gov/feeds/json/cve/2.0}"
 outdir="public"
 current_year=$(date +%Y)
 start_year=$((current_year - 5))
