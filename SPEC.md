@@ -41,6 +41,7 @@ bash download.sh
 | `NVD_MIRROR_URL` | env var | `https://services.nvd.nist.gov/rest/json/cves/2.0` | NVD API 2.0 base URL (set to override the default) |
 | `NVD_API_KEY` | env var | _(unset)_ | Optional NVD API key for higher rate limits |
 | `NVD_RATE_DELAY` | env var | `6` | Seconds to wait between paginated API requests |
+| `NOTIFICATION_WEBHOOK_URL` | env var | _(unset)_ | Optional webhook URL for failure notifications (Slack-compatible JSON payload) |
 | `nvd_api_url` | string | `$NVD_MIRROR_URL` or default | Resolved NVD API base URL |
 | `outdir` | string | `public` | Output directory for downloaded feeds |
 | `current_year` | int | `$(date +%Y)` | Current calendar year |
@@ -50,7 +51,8 @@ bash download.sh
 
 **Functions:**
 
-- `cleanup_on_failure() -> void` — ERR trap handler that removes the output directory on failure, preventing deployment of incomplete feeds.
+- `send_failure_notification() -> void` — Sends a JSON payload (`{"text": "..."}`) to `NOTIFICATION_WEBHOOK_URL` if set; silently skipped when unset. Called by the ERR trap handler. Notification failures are suppressed to avoid masking the original error.
+- `cleanup_on_failure() -> void` — ERR trap handler that removes the output directory on failure, preventing deployment of incomplete feeds. Calls `send_failure_notification()` before cleanup.
 - `_fetch_api_feed(url: string, dest: string) -> 0 | 1` — Fetches all pages from the NVD API 2.0 for a given query URL, aggregates the `vulnerabilities` arrays across pages, assembles the final JSON, and writes it as a gzip file to `dest`. Handles pagination via `startIndex`/`resultsPerPage` parameters. Returns non-zero on curl failure or invalid JSON response.
 - `download_with_retry(url: string, dest: string) -> 0 | 1` — Downloads a complete NVD API 2.0 feed (potentially paginated) to a destination path with retry/backoff logic. Delegates to `_fetch_api_feed` for the actual fetch, then verifies gzip integrity (`gzip -t`); a failed fetch or check triggers a retry. Removes partial files between retries. Prints `OK: <filename>` on success to stdout; prints `FAIL: <url>` and `Retry ...` messages to stderr.
 
@@ -108,7 +110,7 @@ RTK filter configuration (schema version 1, currently empty filters).
 | `x` | T6 | Add `CONTRIBUTING.md` with development setup and contribution guidelines |
 | `x` | T7 | Migrate from NVD 2.0 JSON feeds to the NVD API 2.0 (CVE Change History API), as NIST has deprecated the legacy feed format |
 | `x` | T8 | Add concurrency control to the workflow to cancel in-progress runs when a new one starts |
-| `.` | T9 | Add error notification (e.g., GitHub Actions failure badge or Slack webhook) on download failures |
+| `x` | T9 | Add error notification (e.g., GitHub Actions failure badge or Slack webhook) on download failures |
 | `x` | T10 | Pin `peaceiris/actions-gh-pages` to a specific SHA for supply-chain security |
 | `.` | T11 | Add a `flake.nix` exposing `packages.<system>.nvd-cache` — a derivation that compiles the mirrored feeds into a pre-built vulnix database (`Data.fs`) store path, so consumers get zero-download and zero-compile |
 | `.` | T12 | Build and push `nvd-cache` to a public Cachix binary cache from the daily workflow, so downstream consumers fetch the store path as a substitute |
