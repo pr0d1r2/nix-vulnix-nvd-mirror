@@ -22,7 +22,7 @@ download_with_retry() {
     local attempt=1
 
     while [ "$attempt" -le "$max_retries" ]; do
-        if curl -fsSL --retry 3 --retry-delay 60 --max-time 300 -o "$dest" "$url"; then
+        if curl -fsSL --retry 3 --retry-delay 60 --max-time 300 -o "$dest" "$url" && gzip -t "$dest"; then
             echo "OK: $(basename "$dest")"
             return 0
         fi
