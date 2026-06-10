@@ -41,4 +41,4 @@ download_with_retry \
     "$mirror/nvdcve-2.0-modified.json.gz" \
     "$outdir/nvdcve-2.0-modified.json.gz"
 
-echo "Mirror complete: $(ls "$outdir"/*.json.gz | wc -l) feeds downloaded"
+echo "Mirror complete: $(find "$outdir" -maxdepth 1 -name '*.json.gz' | wc -l) feeds downloaded"
