@@ -4,6 +4,8 @@
 
 A GitHub Pages mirror of NVD (National Vulnerability Database) JSON feeds for use with [vulnix](https://github.com/nix-community/vulnix), the Nix/NixOS vulnerability scanner. A daily GitHub Actions workflow downloads NVD 2.0 CVE feeds (covering the last 6 years plus the "modified" feed) and deploys them to GitHub Pages via force-push, providing a reliable, self-hosted mirror that avoids NVD rate limits and downtime. Target users are NixOS administrators and developers who run vulnix for vulnerability scanning.
 
+Beyond the raw feeds, this project also aims to publish a **pre-built vulnix cache** as a Nix store path: a `flake.nix` output that compiles the mirrored feeds into vulnix's on-disk database (`Data.fs`) at build time and serves it through a binary cache (Cachix). Consumers then obtain a ready-to-use cache via a single store-path copy — **no NVD download and no local compile** — which matters on cold or ephemeral builders (freshly-rebooted CI hosts, stateless live-ISO smoke tests) where the current on-demand download-and-compile is slow and starves time-sensitive work such as QEMU boots.
+
 ## §V — Invariants
 
 1. `download.sh` must exit on any error (`set -Eeuo pipefail`; `-E` ensures the ERR trap propagates into functions).
@@ -20,6 +22,9 @@ A GitHub Pages mirror of NVD (National Vulnerability Database) JSON feeds for us
 12. The workflow uses a concurrency group (`mirror-deploy`) with `cancel-in-progress: true` to prevent overlapping deployments.
 13. On download failure, an ERR trap removes the `public/` directory to prevent deploying an incomplete feed set.
 14. Each downloaded `.json.gz` file is verified with `gzip -t` before being accepted; corrupt files trigger a retry.
+15. The pre-built cache (`flake.nix` `nvd-cache` output) is built **only** from the mirrored feeds plus vulnix; it requires no network at consumer use time and is reproducible from a given feed snapshot.
+16. The pre-built cache is rebuilt on the same daily cadence as the feeds, so a consumer's cache never lags the published feeds by more than ~24h.
+17. The pre-built cache is pushed to a public binary cache (Cachix) by CI, so consumers fetch the store path as a substitute without rebuilding it locally.
 
 ## §I — Interfaces
 
@@ -69,6 +74,21 @@ Used by vulnix via:
 vulnix --mirror https://pr0d1r2.github.io/nix-vulnix-nvd-mirror/ ./result
 ```
 
+### Nix flake — pre-built vulnix cache
+
+```
+nix build github:pr0d1r2/nix-vulnix-nvd-mirror#nvd-cache
+```
+
+- **Output:** `packages.${system}.nvd-cache` — a store path containing a vulnix-compatible database (`Data.fs`) compiled from the mirrored feeds.
+- **Consumed** by pointing vulnix at the store path instead of downloading and compiling:
+
+```
+vulnix -c "$(nix build --no-link --print-out-paths github:pr0d1r2/nix-vulnix-nvd-mirror#nvd-cache)" -R <path>
+```
+
+- **Binary cache:** the `nvd-cache` derivation is served from a Cachix substituter, so on a trusting host the copy is a pure substitution — zero download, zero compile.
+
 ### Config — `.rtk/filters.toml`
 
 RTK filter configuration (schema version 1, currently empty filters).
@@ -87,6 +107,10 @@ RTK filter configuration (schema version 1, currently empty filters).
 | `x` | T8 | Add concurrency control to the workflow to cancel in-progress runs when a new one starts |
 | `.` | T9 | Add error notification (e.g., GitHub Actions failure badge or Slack webhook) on download failures |
 | `x` | T10 | Pin `peaceiris/actions-gh-pages` to a specific SHA for supply-chain security |
+| `.` | T11 | Add a `flake.nix` exposing `packages.<system>.nvd-cache` — a derivation that compiles the mirrored feeds into a pre-built vulnix database (`Data.fs`) store path, so consumers get zero-download and zero-compile |
+| `.` | T12 | Build and push `nvd-cache` to a public Cachix binary cache from the daily workflow, so downstream consumers fetch the store path as a substitute |
+| `.` | T13 | Document consumer usage of the pre-built cache (`vulnix -c <store-path>`), with examples for cold/ephemeral builders and live-ISO smoke seeding |
+| `.` | T14 | Provide a Nix consumer helper (overlay or `nixosModules`) that wires `nvd-cache` into `/var/cache/vulnix` declaratively |
 
 ## §B — Bugs / Known Issues
 
