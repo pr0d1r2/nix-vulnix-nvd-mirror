@@ -43,7 +43,7 @@ Beyond the raw feeds, this project also aims to publish a **pre-built vulnix cac
 31. **Dedup-by-id, then completeness guard.** NVD's `totalResults` can drift *during* a paginated fetch (CVEs published while paging), which both shifts entries across pages (the same CVE appearing twice) and changes the running total. So aggregation **deduplicates by CVE id** (keeping the newest `lastModified`) before any check — making a window fetch idempotent — and the guard accepts the feed when the **deduped count ≥ the `totalResults` of the final page** (not strict equality against the first page). A deduped count materially short of `totalResults` (real truncation/gaps) triggers a retry; never a deploy. Dedup makes re-fetch and merge safe to repeat.
 32. **Atomic assembly, staging outside `public/`.** The live `public/nvdcve-2.0-<feed>.json.gz` is written only after the full feed is aggregated, count-verified (§V.31), and `gzip -t`-validated. Per-page chunks + `checkpoint` stage in a dir **outside** the deployed tree (`${TMPDIR:-/tmp}/nvd-part/<feed>/`, overridable via `staging_dir`), never under `public/`, so a partial feed can never be force-pushed to Pages. The assembled `.gz` is moved into `public/` atomically; the staging dir is removed on success. A partial fetch never overwrites a good prior file.
 33. **Cachix retention ~1 week.** Because the `modified` feed hash changes daily (§V.26), `nvd-cache` is a fresh store path each run; CI runs `cachix gc` / a pin-retention policy keeping ~7 days of `nvd-cache` paths so `pr0d1r2.cachix.org` does not grow unbounded. Older paths are collectable; consumers always resolve the current rev.
-34. **Each `checks.${system}` derivation carries its own tool closure.** A check runs in the Nix sandbox and does not inherit the dev shell, so every check derivation lists the binaries it invokes in `nativeBuildInputs` (e.g. the `shellcheck` check pulls `shellcheck`; the `download` check pulls `bash`/`jq`/`gzip`/`coreutils`).
+34. **Each `checks.${system}` derivation carries its own tool closure.** A check runs in the Nix sandbox and does not inherit the dev shell, so every check derivation lists the binaries it invokes in `nativeBuildInputs` — including **`pkgs.bats`** for every check that runs a `.bats`/`bats test_*.sh` (e.g. the `download` check pulls `bats`+`bash`/`jq`/`gzip`/`coreutils`; the `shellcheck` check pulls `shellcheck`). A missing `bats` is the easy mistake.
 
 41. **Deterministic gzip — feed bytes are a pure function of CVE content.** Every feed `.gz` is written with `gzip -n` (omit original filename **and** mtime from the header) at a fixed compression level, so recompressing identical CVE content yields **byte-identical** output. This is load-bearing: it is what keeps a feed's `sha256` — hence its `feeds.lock` entry and FOD path (§V.15/§V.26) — stable across runs when its content is unchanged, so only feeds whose CVEs actually changed move the lock and trigger an `nvd-cache` rebuild / Cachix push (§V.16, §V.33). Plain `gzip` (with header mtime) would make every feed's hash churn daily and defeat the reproducible-cache design.
 
@@ -302,13 +302,15 @@ Each check is a sandboxed derivation carrying its own tool closure (§V.34):
 
 ```nix
 checks.${system} = {
-  shellcheck   = run [ pkgs.shellcheck ]            "shellcheck *.sh";
-  download     = run [ pkgs.bash pkgs.jq pkgs.gzip pkgs.coreutils ] "bats test_download.sh";
-  checksum     = run [ pkgs.bash pkgs.coreutils ]   "bats test_checksum.sh";
-  flake        = run [ pkgs.bash ]                  "bats test_flake.sh";
-  health-check = run [ pkgs.bash pkgs.gzip ]        "bats test_health_check.sh";
+  shellcheck   = run [ pkgs.shellcheck ]                          "shellcheck *.sh";
+  download     = run [ pkgs.bats pkgs.bash pkgs.jq pkgs.gzip pkgs.coreutils ] "bats test_download.sh";
+  checksum     = run [ pkgs.bats pkgs.bash pkgs.coreutils ]       "bats test_checksum.sh";
+  flake        = run [ pkgs.bats pkgs.bash ]                      "bats test_flake.sh";
+  health-check = run [ pkgs.bats pkgs.bash pkgs.gzip ]            "bats test_health_check.sh";
 };
-# run = inputs: cmd: pkgs.runCommand "check" { nativeBuildInputs = inputs; } "${cmd}; touch $out";
+# run = inputs: cmd: pkgs.runCommand "check" { src = ./.; nativeBuildInputs = inputs; }
+#                      "cd $src; ${cmd}; touch $out";
+# Every bats-running check MUST include pkgs.bats in its inputs (§V.34).
 ```
 
 ```
