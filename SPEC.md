@@ -59,6 +59,8 @@ Beyond the raw feeds, this project also aims to publish a **pre-built vulnix cac
 
 ### vulnix compatibility (§D)
 
+43. **Read-only store path is not directly usable as a ZODB cache-dir.** The `nvd-cache` output is read-only; ZODB `Data.fs` expects a writable directory (lock, `.index`, pack). Consumers must copy `Data.fs` into a writable location (or use a read-only-capable vulnix invocation), not point `--cache-dir` at the bare store path. The consumer helper (T14) performs this copy into `/var/cache/vulnix`; docs (T13) state it explicitly.
+
 40. **The `nvd-cache` build is the integration test.** `nvd-cache` runs `vulnix --update` against the mirrored feeds at build time (§V.15); if the pinned `vulnix` cannot parse the published feed schema/layout, the build fails and CI/mirror go red. Thus the feed format published by `download.sh` MUST be a layout the pinned `vulnix` consumes — verified continuously by the build, not assumed. If `vulnix` requires legacy `.meta` sidecars or 1.1-shaped feeds, `download.sh` must emit them (see T29/T30).
 
 ## §I — Interfaces
@@ -213,6 +215,8 @@ in pkgs.stdenv.mkDerivation {
 vulnix -c "$(nix build --no-link --print-out-paths github:pr0d1r2/nix-vulnix-nvd-mirror#nvd-cache)" -R <path>
 ```
 
+> **Read-only store caveat (§V.43, T13/T14):** the `nvd-cache` store path is read-only, but ZODB (`Data.fs`) normally wants a writable dir (lock file, `Data.fs.index`, pack/append). Pointing vulnix's cache-dir straight at `/nix/store/…` may fail or refuse to open. Consumers should **copy `Data.fs` into a writable dir** first (e.g. `install -m644 <store>/Data.fs /var/cache/vulnix/Data.fs`) or open it read-only if the vulnix version supports it. The `nixosModules` helper (T14) does this copy declaratively.
+
 - **Binary cache:** the `nvd-cache` derivation is served from `pr0d1r2.cachix.org`, so on a trusting host the copy is a pure substitution — zero download, zero compile.
 
 ### Feeds lock — `feeds.lock`
@@ -327,8 +331,8 @@ RTK filter configuration (schema version 1, currently empty filters).
 | `.` | T29 | **Verify vulnix consumes the published 2.0 feed layout** (§B.6, §V.40): run the pinned `vulnix --update` against a sample mirror; confirm `nvd-cache` builds a non-empty `Data.fs`. If it can't parse, pin a 2.0-aware vulnix or switch the producer's output shape |
 | `.` | T30 | If T29 shows vulnix needs them: emit legacy `.meta` sidecars (and/or 1.1-shaped feeds) from `download.sh` so the mirror layout matches what vulnix expects (§V.40) |
 | `.` | T31 | Widen `health_check.sh` budget (e.g. `max_attempts=10`, `attempt_delay=60` ⇒ 10 min) or make it non-fatal, to absorb rare GitHub Pages CDN propagation lag without a false-negative red run |
-| `.` | T13 | Document consumer usage of the pre-built cache (`vulnix -c <store-path>`), with examples for cold/ephemeral builders and live-ISO smoke seeding |
-| `.` | T14 | Provide a Nix consumer helper (overlay or `nixosModules`) that wires `nvd-cache` into `/var/cache/vulnix` declaratively |
+| `.` | T13 | Document consumer usage of the pre-built cache, **including the read-only-store caveat** (copy `Data.fs` to a writable dir; don't point `--cache-dir` at `/nix/store`, §V.43), with examples for cold/ephemeral builders and live-ISO smoke seeding |
+| `.` | T14 | Provide a Nix consumer helper (overlay or `nixosModules`) that **copies** `nvd-cache`'s `Data.fs` into a writable `/var/cache/vulnix` declaratively (§V.43) |
 
 ## §B — Bugs / Known Issues
 
