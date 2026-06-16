@@ -59,6 +59,8 @@ Beyond the raw feeds, this project also aims to publish a **pre-built vulnix cac
 
 ### vulnix compatibility (§D)
 
+44. **`nvd-cache` version is content-addressed to `feeds.lock`, not the flake date.** `version = hashString sha256 (readFile ./feeds.lock)` (truncated), never `self.lastModifiedDate`. The flake's `lastModifiedDate` changes on every commit (including the daily `feeds.lock` commit), so a date-based version would give two revs with *identical* feeds different store paths → cross-rev cache misses. Keying the version to `feeds.lock` content means the `nvd-cache` path changes **iff** a feed hash changed, maximising substitute hits.
+
 43. **Read-only store path is not directly usable as a ZODB cache-dir.** The `nvd-cache` output is read-only; ZODB `Data.fs` expects a writable directory (lock, `.index`, pack). Consumers must copy `Data.fs` into a writable location (or use a read-only-capable vulnix invocation), not point `--cache-dir` at the bare store path. The consumer helper (T14) performs this copy into `/var/cache/vulnix`; docs (T13) state it explicitly.
 
 40. **The `nvd-cache` build is the integration test.** `nvd-cache` runs `vulnix --update` against the mirrored feeds at build time (§V.15); if the pinned `vulnix` cannot parse the published feed schema/layout, the build fails and CI/mirror go red. Thus the feed format published by `download.sh` MUST be a layout the pinned `vulnix` consumes — verified continuously by the build, not assumed. If `vulnix` requires legacy `.meta` sidecars or 1.1-shaped feeds, `download.sh` must emit them (see T29/T30).
@@ -201,7 +203,10 @@ let
   feedFarm = pkgs.linkFarm "nvd-feeds"
     (map (n: { name = "nvdcve-2.0-${n}.json.gz"; path = mkFeed n; }) feeds);
 in pkgs.stdenv.mkDerivation {
-  pname = "nvd-cache"; version = builtins.substring 0 8 (self.lastModifiedDate or "0");
+  pname = "nvd-cache";
+  # version derived from feeds.lock content, NOT the flake date — so two revs
+  # with identical feeds yield the SAME store path (cross-rev cache hit). §V.44
+  version = builtins.substring 0 12 (builtins.hashString "sha256" (builtins.readFile ./feeds.lock));
   dontUnpack = true;
   nativeBuildInputs = [ pkgs.vulnix pkgs.python3Packages.zodb ];
   buildPhase  = "export HOME=$TMPDIR; vulnix --mirror file://${feedFarm} --cache-dir $TMPDIR/cache --update";
