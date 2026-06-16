@@ -38,7 +38,7 @@ Beyond the raw feeds, this project also aims to publish a **pre-built vulnix cac
 26. `feeds.lock` is a committed JSON file mapping each mirrored feed (`{year}` and `modified`) to the `sha256` of its published `.json.gz` on the Pages mirror. It is the reproducibility anchor for `nvd-cache` (§V.15) — analogous to `flake.lock` for inputs. `mirror.yml` regenerates and commits it on every daily run **after** the feeds are deployed, so the lock always matches the live bytes. The `modified` feed's hash changes every run; that is expected (the whole cache rebuilds daily anyway, §V.16).
 27. `download.sh` in `mirror.yml` receives `NVD_API_KEY` from the `NVD_API_KEY` secret (passed as env) so the daily fetch uses authenticated NVD rate limits; the run still succeeds (slower) if the secret is absent. `NVD_API_KEY` is a **pure speed optimization, never a reliability requirement** — the anonymous path is made reliable by the per-page resilience of §V.28–§V.32.
 28. **Per-page retry, not per-feed.** Within a paginated feed fetch, each individual page request retries independently with exponential backoff (`5,10,20,40,80,160s` + ±20% jitter, capped at 300s, ≥6 attempts) before the feed is considered failed. A transient failure on one page never re-fetches already-completed pages.
-29. **Honor server back-pressure.** On HTTP `429`/`503`, `_fetch_api_feed` reads the `Retry-After` response header (`curl -D`) and sleeps for that duration, overriding the computed backoff; this is what keeps the anonymous (keyless) path within NVD's 5-requests/30s limit.
+29. **Honor server back-pressure.** On HTTP `429`/`503`, `_fetch_page` reads the `Retry-After` response header (`curl -D`) and sleeps for that duration, overriding the computed backoff; this is what keeps the anonymous (keyless) path within NVD's 5-requests/30s limit.
 30. **Checkpoint = continuation.** Page fetches write into a per-feed staging dir **outside `public/`** — `${staging_dir}/<feed>/` (default `${TMPDIR:-/tmp}/nvd-part`) — one `page-<startIndex>.json` per page plus a `checkpoint` file recording `lastIndex` and `totalResults`. A feed-level retry resumes from `lastIndex` rather than `startIndex=0`; completed pages are never re-requested within a run. Scope is **within-run** (across the `max_retries` feed attempts); the staging dir is not persisted across separate workflow runs (feeds rebuild daily regardless), and the ERR trap removes both the staging dir and `public/` on fatal failure so a partial feed never deploys.
 31. **Completeness guard.** A feed is accepted only when the number of aggregated `vulnerabilities` equals the `totalResults` reported by the first page; a mismatch (truncation, gaps) triggers a retry, never a deploy.
 32. **Atomic assembly, staging outside `public/`.** The live `public/nvdcve-2.0-<feed>.json.gz` is written only after the full feed is aggregated, count-verified (§V.31), and `gzip -t`-validated. Per-page chunks + `checkpoint` stage in a dir **outside** the deployed tree (`${TMPDIR:-/tmp}/nvd-part/<feed>/`, overridable via `staging_dir`), never under `public/`, so a partial feed can never be force-pushed to Pages. The assembled `.gz` is moved into `public/` atomically; the staging dir is removed on success. A partial fetch never overwrites a good prior file.
@@ -49,7 +49,7 @@ Beyond the raw feeds, this project also aims to publish a **pre-built vulnix cac
 
 35. **Daily window = single ≤120-day `lastMod` query.** A normal run fetches one window `lastModStartDate = now − window_days` … `lastModEndDate = now` (`window_days = 120`), paginated (§V.28–§V.32). It does **not** issue any `pubStartDate`/`pubEndDate` year query.
 36. **NVD 120-day hard limit.** No single NVD API query may span more than 120 days (applies to both `pubStart/pubEnd` and `lastModStart/lastModEnd`); a wider range is rejected by NVD. Every query the script issues — daily window and each bootstrap window — respects this.
-37. **Prior state is the published mirror.** At run start `download.sh` seeds `public/` from the currently-published feeds (downloaded from the Pages mirror, or the checked-out `gh-pages` branch). The accumulated timeline is this published set; each run reads it, merges the new window, and redeploys.
+37. **Prior state is the published mirror.** At run start `download.sh` seeds `public/` by downloading the currently-published feeds over HTTP from `pages_url` (the previous day's deploy — stable, not affected by the current run's propagation). The accumulated timeline is this published set; each run reads it, merges the new window, and redeploys.
 38. **Upsert merge, keyed by CVE id + `lastModified`.** Each CVE returned in the window is merged into its **publication-year bucket** (`nvdcve-2.0-{pubYear}.json.gz`): replace an existing entry only if the incoming `lastModified` is newer, insert if absent. The `modified` feed is rewritten to the window contents. Re-emit only the affected year files. After merge, prune year feeds outside `(current_year-5)…current_year`.
 39. **One-time bootstrap.** When the mirror is empty (no prior state), `download.sh` backfills the full 6-year history via **sequential ≤120-day `pubStart/pubEnd` windows** (~19 windows), then proceeds as normal. A bootstrap is idempotent and resumable via the §V.30 checkpoint. Missed daily runs self-heal: the 120-day lookback far exceeds the daily cadence, so no gap forms.
 
@@ -90,9 +90,9 @@ bash download.sh
 **Functions:**
 
 - `send_failure_notification() -> void` — Sends a JSON payload (`{"text": "..."}`) to `NOTIFICATION_WEBHOOK_URL` if set; silently skipped when unset. Called by the ERR trap handler. Notification failures are suppressed to avoid masking the original error.
-- `cleanup_on_failure() -> void` — ERR trap handler that removes the output directory on failure, preventing deployment of incomplete feeds. Calls `send_failure_notification()` before cleanup.
+- `cleanup_on_failure() -> void` — ERR trap handler that removes the output directory `public/` **and** `staging_dir` on failure, preventing deployment of incomplete feeds (§V.13, §V.30). Calls `send_failure_notification()` before cleanup. A failed run retains the previous day's published deploy.
 - `_fetch_page(url: string, start_index: int, dest_dir: string) -> 0 | 1` — Fetches one page (`startIndex=<n>&resultsPerPage=2000`) with per-page exponential backoff + jitter (§V.28). On HTTP `429`/`503` reads `Retry-After` (via `curl -D`) and sleeps that long (§V.29). On success writes `page-<start_index>.json` (the page's `vulnerabilities[]`) into `dest_dir` and updates `checkpoint`. Returns non-zero only after exhausting per-page attempts.
-- `_fetch_api_feed(url: string, dest: string) -> 0 | 1` — Drives pagination for one feed using a checkpoint dir `public/.part/<feed>/`: reads `checkpoint` to resume from `lastIndex` (or starts at 0), reads `totalResults` from the first page, then loops `_fetch_page` until `startIndex >= totalResults` (§V.30). Aggregates all `page-*.json`, verifies the count equals `totalResults` (§V.31), assembles the final JSON, gzips it, validates with `gzip -t`, atomically moves it to `dest`, and removes `.part/<feed>/` (§V.32). Returns non-zero on any page exhaustion, count mismatch, or invalid JSON.
+- `_fetch_api_feed(url: string, dest: string) -> 0 | 1` — Drives pagination for one feed using a checkpoint dir `${staging_dir}/<feed>/` (**outside `public/`**, §V.30): reads `checkpoint` to resume from `lastIndex` (or starts at 0), reads `totalResults` from the first page, then loops `_fetch_page` until `startIndex >= totalResults` (§V.30). Aggregates all `page-*.json`, verifies the count equals `totalResults` (§V.31), assembles the final JSON, gzips it, validates with `gzip -t`, atomically moves it to `dest`, and removes `${staging_dir}/<feed>/` (§V.32). Returns non-zero on any page exhaustion, count mismatch, or invalid JSON.
 - `download_with_retry(url: string, dest: string) -> 0 | 1` — Feed-level wrapper: retries `_fetch_api_feed` up to `max_retries` with backoff; because `_fetch_api_feed` resumes from the checkpoint (§V.30), a retry continues rather than restarts. Prints `OK: <filename>` on success to stdout; prints `FAIL: <url>` and `Retry ...` to stderr.
 - `seed_prior_state() -> void` — Downloads the currently-published feeds from `pages_url` into `public/` so the run starts from the accumulated timeline (§V.37). Absent prior state ⇒ triggers bootstrap (`is_bootstrap=1`).
 - `merge_window(window_json: path) -> void` — Upserts the CVEs of a fetched ≤120-day window into the per-publication-year buckets in `public/`, keyed by CVE id + `lastModified` (newer wins), rewrites `nvdcve-2.0-modified.json.gz`, re-emits only affected year files, and prunes buckets outside `start_year…current_year` (§V.38).
@@ -118,7 +118,7 @@ totalResults=24891
 
 ### GitHub Actions — `.github/workflows/ci.yml`
 
-- **Trigger:** `push`, `pull_request`, and `workflow_call` (so `mirror.yml` can reuse it as a gate). `push` sets `paths-ignore: [feeds.lock]` so the daily data-only `feeds.lock` commit (§V.26) does not spend a redundant CI run (§G5).
+- **Trigger:** `push`, `pull_request`, and `workflow_call` (so `mirror.yml` can reuse it as a gate). `push` sets `paths-ignore: [feeds.lock]` so the daily data-only `feeds.lock` commit (§V.26) does not spend a redundant CI run.
 - **Steps:**
   1. `actions/checkout` (SHA-pinned) + `cachix/install-nix-action` (SHA-pinned).
   2. `cachix/cachix-action` (SHA-pinned) with `name: pr0d1r2` and `authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}` — auto-pushes build outputs; no-op push when the token is absent (§V.23).
@@ -131,12 +131,12 @@ totalResults=24891
 - **Concurrency:** `mirror-deploy` group with `cancel-in-progress: true`
 - **Gate:** a `check` job calls `ci.yml` via `uses: ./.github/workflows/ci.yml`; the deploy job sets `needs: check`, so feeds deploy only after `nix flake check` passes (§V.24).
 - **Secrets:** `NVD_API_KEY` (env for `download.sh`, §V.27), `CACHIX_AUTH_TOKEN` (cache push, §V.23).
-- **Checkout:** `fetch-depth: 0` so the daily `feeds.lock` commit can `git pull --rebase`/push without non-fast-forward errors on a shallow clone (§E).
+- **Checkout:** `fetch-depth: 0` so the daily `feeds.lock` commit can `git pull --rebase`/push without non-fast-forward errors on a shallow clone.
 - **Steps (deploy job, after gate):**
   1. `download.sh` — seeds `public/` from the published mirror, merges the latest ≤120-day window (bootstraps if empty), uses `NVD_API_KEY` if set (§V.35–§V.39).
   2. `peaceiris/actions-gh-pages@v4.1.0` (SHA-pinned) — deploys `./public` to GitHub Pages.
   3. `health_check.sh` — post-deploy verification that the live Pages endpoint serves valid gzip feeds (T5).
-  4. Regenerate `feeds.lock` (`nix hash file --sri --type sha256` per `public/*.json.gz`) and **commit to `main`** — `git pull --rebase` first to avoid non-fast-forward; commit message carries `[skip ci]` as a backstop to `paths-ignore` (§V.26, §G5).
+  4. Regenerate `feeds.lock` (`nix hash file --sri --type sha256` per `public/*.json.gz`) and **commit to `main`** — `git pull --rebase` first to avoid non-fast-forward; commit message carries `[skip ci]` as a backstop to `paths-ignore` (§V.26).
   5. **Pre-seed feed FODs from local bytes:** `nix-store --add-fixed sha256 public/nvdcve-2.0-*.json.gz` — populates the exact flat-FOD store paths so the next build skips the lagging Pages fetch (§V.15a).
   6. `nix build .#nvd-cache` — feed FODs already in store; `cachix-action` (`CACHIX_AUTH_TOKEN`) pushes the result to `pr0d1r2.cachix.org` (§V.22, §V.24); a retention step trims to ~7 days (§V.33).
 
@@ -283,8 +283,8 @@ checks.${system} = {
 ```
 
 ```
-nix flake check          # run all checks
-nix build .#nvd-cache    # build cache (pushed to Cachix in CI)
+nix flake check          # run all checks (CI / ci.yml)
+nix build .#nvd-cache    # build cache — only in mirror.yml, after feeds.lock (§V.22)
 ```
 
 ### Config — `.rtk/filters.toml`
@@ -311,7 +311,7 @@ RTK filter configuration (schema version 1, currently empty filters).
 | `.` | T19 | Add `checks.${system}` to `flake.nix` wrapping `shellcheck` + every `test_*.sh` as derivations, so `nix flake check` runs all verifications (§V.21) |
 | `.` | T20 | Add `.github/workflows/ci.yml` (push/PR/`workflow_call`): install Nix, run `nix flake check`, push check/devShell closures to `pr0d1r2.cachix.org` via `cachix-action` + `CACHIX_AUTH_TOKEN` (skip when secret absent). Does **not** build `nvd-cache` — no feeds on push/PR (§V.22, §V.23) |
 | `.` | T21 | Gate `mirror.yml` on `ci.yml`: add a `check` job `uses: ./.github/workflows/ci.yml` and set the deploy job `needs: check`, so feeds deploy only after `nix flake check` passes (§V.24) |
-| `.` | T23 | **Refactor `nvd-cache` for reproducibility:** drop `src = ./public`; model each feed as a flat fixed-output `pkgs.fetchurl` (path = `f(name,sha256)`), pin via committed `feeds.lock`, derive the feed list from `builtins.attrNames lock` (§V.15b), assemble with `linkFarm`. Same derivation hash for mirror/CI/consumer → Cachix substitute hits (§V.15, §V.15a, §V.26). **Also update `test_flake.sh`** (Test 4 "feeds from public/" assertion is obsolete; keep Test 2's `packages.nvd-cache` grep matching) so the gated check stays green (§C) |
+| `.` | T23 | **Refactor `nvd-cache` for reproducibility:** drop `src = ./public`; model each feed as a flat fixed-output `pkgs.fetchurl` (path = `f(name,sha256)`), pin via committed `feeds.lock`, derive the feed list from `builtins.attrNames lock` (§V.15b), assemble with `linkFarm`. Same derivation hash for mirror/CI/consumer → Cachix substitute hits (§V.15, §V.15a, §V.26). **Also update `test_flake.sh`** (Test 4 "feeds from public/" assertion is obsolete; keep Test 2's `packages.nvd-cache` grep matching) so the gated check stays green |
 | `.` | T12 | In `mirror.yml` deploy job, after Pages deploy + `health_check.sh`: regenerate `feeds.lock` (SRI) and commit to `main` (`git pull --rebase`, `[skip ci]`); `nix-store --add-fixed sha256 public/*.json.gz` to pre-seed feed FODs (§V.15a); `nix build .#nvd-cache`; push to `pr0d1r2.cachix.org` via `cachix-action`; trim to ~7 days (§V.16, §V.22, §V.24, §V.26, §V.33) |
 | `.` | T24 | Pass `NVD_API_KEY` secret as env to `download.sh` in `mirror.yml` for authenticated NVD rate limits; run still succeeds if absent (§V.27). Document acquisition (request form → email activation → UUID → repo secret) in `CONTRIBUTING.md`/`README.md` |
 | `.` | T22 | Add `nixConfig.extra-substituters` + `extra-trusted-public-keys` for `pr0d1r2.cachix.org` to `flake.nix` so trusting consumers substitute with zero compile; document the `--accept-flake-config`/trust requirement (§V.25) |
