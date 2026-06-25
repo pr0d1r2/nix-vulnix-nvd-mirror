@@ -64,7 +64,7 @@ Beyond the raw feeds, this project also aims to publish a **pre-built vulnix cac
 43. **Read-only store path is not usable as a cache-dir — consumers must copy `Data.fs`.** Confirmed from source: vulnix opens `ZODB.FileStorage.FileStorage(Data.fs)` **read-write (no `read_only` flag)** and `os.makedirs(cache_dir)`, so pointing `-c` at the read-only `/nix/store` path **fails** — there is no read-only invocation to fall back on. Consumers copy `Data.fs` into a writable dir (`install -m644 <store>/Data.fs /var/cache/vulnix/Data.fs`); FileStorage rebuilds its `.index` there from `Data.fs` alone. The consumer helper (T14) performs this copy into `/var/cache/vulnix`; docs (T13) state it explicitly.
 
 40. **The `nvd-cache` build is the integration test.** `nvd-cache` drives `vulnix` against the mirrored feeds at build time (§V.15); if the pinned `vulnix` cannot consume the published layout, the build fails and CI/mirror go red — verified continuously, not assumed. vulnix (current) **is NVD-API-2.0-native** and expects exactly our `nvdcve-2.0-{year|modified}.json.gz` over its `-m/--mirror`, with year range `current-5…current` — matching `download.sh`. It uses **ETag** conditional requests, **not** `.meta` sidecars, so the mirror needs no `.meta` files (GitHub Pages serves ETags automatically).
-46. **Feeds are served to vulnix over loopback HTTP at build time (vulnix is HTTP-only).** vulnix fetches via `requests.get(mirror + file)` and ships **no `file://` adapter**, so `-m file://…` raises `InvalidSchema`. The `nvd-cache` build instead starts a throwaway HTTP server bound to `127.0.0.1` serving `${feedFarm}`, and points `vulnix -m http://127.0.0.1:<port>/`. The Nix build sandbox permits loopback (but not external) networking, so this stays hermetic — all bytes come from the local feed FODs, never the network. The server is killed on phase exit.
+46. **Feeds are served to vulnix over loopback HTTP at build time (vulnix is HTTP-only).** vulnix fetches via `requests.get(mirror + file)` and ships **no `file://` adapter**, so `-m file://…` raises `InvalidSchema`. The `nvd-cache` build instead starts a throwaway HTTP server bound to `127.0.0.1` serving `${feedFarm}`, and points `vulnix -m http://127.0.0.1:<port>/`. The Nix build sandbox permits loopback (but not external) networking, so this stays hermetic — all bytes come from the local feed FODs, never the network. The server is killed on phase exit. The port is **derived per-build** (e.g. from `$NIX_BUILD_TOP`) rather than a fixed constant: on Linux each build has its own network namespace so collisions are impossible, but on macOS (sandbox often disabled) the loopback is shared, so a build-unique high port avoids clashes between concurrent builds.
 49. **`feeds.lock` and `serve-feeds.py` must be committed before the flake is used (no eval chicken-egg).** The flake reads `./feeds.lock` and references `${./serve-feeds.py}` at evaluation time, so both must exist in-tree or `nix flake check`/`nix build`/`nix develop` fail to evaluate — which would break the very PR that introduces the flake (T23). Therefore T23 commits an **initial real `feeds.lock`** (seeded from a first manual mirror run, or hand-written for the current six id-years + `modified`) **and** `serve-feeds.py` in the same change. The flake additionally guards a missing lock (`pathExists` → `{}`, §V.15 sketch) so the devShell and checks still evaluate; only `nvd-cache` requires a populated lock. After go-live the daily mirror keeps the lock current (§V.26).
 
 48. **The build's HTTP server synthesizes an empty feed for any absent in-range year (404-abort immunity).** vulnix computes its requested year set as `current-5…current` from **today's date** and calls `raise_for_status()` — so a single missing year feed (HTTP 404) **aborts the whole update**. But `feeds.lock`/`${feedFarm}` is a *snapshot* from the last mirror run, which can lag vulnix's date at year rollover (e.g. a build on Jan 1 wants the new year before the mirror has published it). To stay robust, the server does **not** plain-serve a static dir: for a requested `nvdcve-2.0-<year>.json.gz` that is **not** in `feedFarm`, it returns a synthetic **empty-but-valid** feed (`{…,totalResults:0,vulnerabilities:[]}`, gzipped) with HTTP 200 instead of 404; real feeds are served as-is. This makes the build immune to the build-date↔lock-snapshot skew (and to vulnix requesting a year the mirror legitimately has no CVEs for). Consumers using the **raw mirror** (`vulnix --mirror <pages>`) are protected at rollover by §V.38's December pre-publish of the next-year empty feed; the prebuilt `nvd-cache` substitute is unaffected either way.
@@ -134,7 +134,7 @@ totalResults=24891
 
 - **Trigger:** `push`, `pull_request`, and `workflow_call` (so `mirror.yml` can reuse it as a gate). `push` sets `paths-ignore: [feeds.lock]` so the daily data-only `feeds.lock` commit (§V.26) does not spend a redundant CI run.
 - **Steps (build first, then check — §V.21):**
-  1. `actions/checkout` (SHA-pinned) + `cachix/install-nix-action` (SHA-pinned).
+  1. `actions/checkout` (SHA-pinned) + `cachix/install-nix-action` (SHA-pinned) configured with `extra_nix_config: experimental-features = nix-command flakes` (required for `nix build`/`nix flake check`).
   2. `cachix/cachix-action` (SHA-pinned) with `name: pr0d1r2` and `authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}` — auto-pushes whatever the build step produces; no-op when the token is absent (§V.23).
   3. **Build** the intended closures, each **named** (no `.*` wildcard): `nix build .#devShells.${system}.default .#checks.${system}.shellcheck .#checks.${system}.download .#checks.${system}.checksum .#checks.${system}.flake .#checks.${system}.health-check` — pushed to Cachix by step 2.
   4. **Check** with `nix flake check --no-build` — evaluates + runs the already-built `checks.${system}`; **builds nothing** (§V.21, §V.34).
@@ -147,6 +147,7 @@ totalResults=24891
 - **Gate:** a `check` job calls `ci.yml` via `uses: ./.github/workflows/ci.yml`; the deploy job sets `needs: check`, so feeds deploy only after `nix flake check` passes (§V.24).
 - **Secrets:** `NVD_API_KEY` (env for `download.sh`, §V.27), `CACHIX_AUTH_TOKEN` (cache push, §V.23).
 - **Checkout:** `fetch-depth: 0` so the daily `feeds.lock` commit can `git pull --rebase`/push without non-fast-forward errors on a shallow clone.
+- **Nix config:** `install-nix-action` sets `experimental-features = nix-command flakes` (needed by `nix build .#nvd-cache`).
 - **Steps (deploy job, after gate):**
   1. `download.sh` — seeds `public/` from the published mirror, merges the latest ≤120-day window (bootstraps if empty), uses `NVD_API_KEY` if set (§V.35–§V.39).
   2. `peaceiris/actions-gh-pages@v4.1.0` (SHA-pinned) — deploys `./public` to GitHub Pages.
@@ -224,11 +225,13 @@ in pkgs.stdenv.mkDerivation {
     export HOME=$TMPDIR; mkdir -p $TMPDIR/cache
     # vulnix is HTTP-only (no file:// adapter), so serve feeds on loopback (§V.46).
     # Custom handler: absent in-range year -> synthetic empty feed (200), not 404 (§V.48).
-    ${pkgs.python3}/bin/python ${./serve-feeds.py} ${feedFarm} 8731 & server=$!
+    port=$(( 20000 + $(echo $NIX_BUILD_TOP | cksum | cut -d' ' -f1) % 20000 ))   # build-unique (§V.46)
+    ${pkgs.python3}/bin/python ${./serve-feeds.py} ${feedFarm} $port & server=$!
     trap "kill $server" EXIT
-    until ${pkgs.curl}/bin/curl -sf http://127.0.0.1:8731/nvdcve-2.0-modified.json.gz -o /dev/null; do sleep 0.2; done
+    until ${pkgs.curl}/bin/curl -sf http://127.0.0.1:$port/nvdcve-2.0-modified.json.gz -o /dev/null; do sleep 0.2; done
+    vulnix_mirror=http://127.0.0.1:$port/
     # scan a tiny real package to drive feed retrieval (§V.47); ${self} is source-only, unsafe
-    vulnix -m http://127.0.0.1:8731/ -c $TMPDIR/cache ${pkgs.hello} || true   # vuln-exit ≠ build fail (§V.45)
+    vulnix -m $vulnix_mirror -c $TMPDIR/cache ${pkgs.hello} || true   # vuln-exit ≠ build fail (§V.45)
     test -s $TMPDIR/cache/Data.fs                                       # real success gate (§V.40/§V.45)
     runHook postBuild
   '';
