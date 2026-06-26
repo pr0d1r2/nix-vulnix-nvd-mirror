@@ -36,12 +36,32 @@ else
     fail "flake.nix does not reference vulnix"
 fi
 
-# ── Test 4: flake.nix references feeds from public/ ──────────────────────────
+# ── Test 4: flake.nix sources feeds from feeds.lock (not working-tree public/) ─
+# SPEC §V.15/§V.15b: feeds are flat FODs pinned by a committed feeds.lock whose
+# keys are the single source of truth — NOT a gitignored ./public.
 
-if grep -q './public' "$SCRIPT_DIR/flake.nix"; then
-    pass "flake.nix sources feeds from ./public"
+if grep -q 'feeds.lock' "$SCRIPT_DIR/flake.nix" \
+    && grep -q 'attrNames' "$SCRIPT_DIR/flake.nix" \
+    && ! grep -q 'src = ./public' "$SCRIPT_DIR/flake.nix"; then
+    pass "flake.nix sources feeds from feeds.lock (no src = ./public)"
 else
-    fail "flake.nix does not reference ./public"
+    fail "flake.nix must source feeds from feeds.lock, not src = ./public"
+fi
+
+# ── Test 4b: feeds.lock exists and is valid JSON (SPEC §V.49) ────────────────
+
+if [[ -f "$SCRIPT_DIR/feeds.lock" ]] && jq -e . "$SCRIPT_DIR/feeds.lock" >/dev/null 2>&1; then
+    pass "feeds.lock exists and is valid JSON"
+else
+    fail "feeds.lock missing or invalid JSON"
+fi
+
+# ── Test 4c: serve-feeds.py exists and is referenced (SPEC §V.46/§V.48) ──────
+
+if [[ -f "$SCRIPT_DIR/serve-feeds.py" ]] && grep -q 'serve-feeds.py' "$SCRIPT_DIR/flake.nix"; then
+    pass "serve-feeds.py exists and is referenced by flake.nix"
+else
+    fail "serve-feeds.py missing or not referenced by flake.nix"
 fi
 
 # ── Test 5: flake.nix produces Data.fs ───────────────────────────────────────
@@ -60,12 +80,16 @@ else
     fail "flake.nix does not use eachDefaultSystem"
 fi
 
-# ── Test 7: derivation does not require network (no fetchurl/fetchFromGitHub) ─
+# ── Test 7: feeds are reproducible fixed-output derivations (SPEC §V.15) ──────
+# The cache is reproducible precisely BECAUSE feeds are flat FODs pinned by
+# sha256 in feeds.lock (path = f(name,sha256)); fetchurl here is a fixed-output,
+# network-pure input, which is what makes the Cachix substitute hit.
 
-if grep -qE 'fetchurl|fetchFromGitHub|fetchgit|builtins.fetch' "$SCRIPT_DIR/flake.nix"; then
-    fail "flake.nix derivation uses network fetchers (should be network-free)"
+if grep -q 'fetchurl' "$SCRIPT_DIR/flake.nix" \
+    && grep -q 'sha256 = lock' "$SCRIPT_DIR/flake.nix"; then
+    pass "flake.nix pins feeds as fixed-output fetchurl from feeds.lock"
 else
-    pass "flake.nix derivation is network-free (no fetchers in build)"
+    fail "flake.nix must pin feeds as fixed-output fetchurl (sha256 from feeds.lock)"
 fi
 
 # ── Test 8: flake.nix has proper inputs (nixpkgs, flake-utils) ───────────────
