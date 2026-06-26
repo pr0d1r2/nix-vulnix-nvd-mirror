@@ -95,10 +95,34 @@
             platforms = platforms.all;
           };
         };
+        # §V.21/§V.34 — each check is a sandboxed derivation carrying its own
+        # tool closure; building a check runs its test. (The test_*.sh are plain
+        # bash, run with `bash`, not bats.)
+        mkCheck = name: inputs: cmd:
+          pkgs.runCommand "check-${name}" { nativeBuildInputs = inputs; } ''
+            cp -r ${self}/. work && chmod -R u+w work && cd work
+            ${cmd}
+            touch $out
+          '';
       in
       {
         packages.nvd-cache = nvd-cache;
         packages.default = nvd-cache;
+
+        checks = {
+          shellcheck = mkCheck "shellcheck" [ pkgs.shellcheck ]
+            "shellcheck download.sh health_check.sh";
+          # test_download.sh / test_checksum.sh execute download.sh against a
+          # mocked curl, so they need download.sh's full toolset.
+          download = mkCheck "download" [ pkgs.bash pkgs.jq pkgs.gzip pkgs.gnugrep pkgs.coreutils pkgs.findutils ]
+            "bash test_download.sh";
+          checksum = mkCheck "checksum" [ pkgs.bash pkgs.jq pkgs.gzip pkgs.gnugrep pkgs.coreutils pkgs.findutils ]
+            "bash test_checksum.sh";
+          flake = mkCheck "flake" [ pkgs.bash pkgs.jq pkgs.gnugrep ]
+            "bash test_flake.sh";
+          health-check = mkCheck "health-check" [ pkgs.bash pkgs.gzip pkgs.gnugrep pkgs.coreutils ]
+            "bash test_health_check.sh";
+        };
       }
     );
 }

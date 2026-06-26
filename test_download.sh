@@ -138,7 +138,7 @@ test_year_range() {
 
     local expected_count=$((current_year - start_year + 1 + 1))
     if [[ "$expected_files" -eq "$expected_count" ]]; then
-        pass "year range: $expected_count feeds for $start_year–$current_year + modified"
+        pass "year range: $expected_count feeds for ${start_year}-${current_year} + modified"
     else
         fail "year range: expected $expected_count files, got $expected_files"
     fi
