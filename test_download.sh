@@ -11,6 +11,18 @@ failed=0
 pass() { echo "PASS: $1"; passed=$((passed + 1)); }
 fail() { echo "FAIL: $1" >&2; failed=$((failed + 1)); }
 
+# Generated mock helpers use `#!/usr/bin/env bash`, but a hermetic Nix build
+# sandbox has no /usr/bin/env. Rewrite each mock's shebang to the bash actually
+# on PATH so the tests run both locally and under `nix flake check`.
+fix_mock_shebangs() {
+    local d="$1" f bash_path
+    bash_path="$(command -v bash)"
+    for f in "$d"/*; do
+        [ -e "$f" ] || continue
+        sed "1s|^#!/usr/bin/env bash\$|#!$bash_path|" "$f" > "$f.tmp" && mv "$f.tmp" "$f" && chmod +x "$f"
+    done
+}
+
 current_year=$(date +%Y)
 start_year=$((current_year - 5))
 
@@ -97,6 +109,7 @@ run_download() {
     mock_bin=$(setup_mocks)
 
     (
+        fix_mock_shebangs "$mock_bin"
         export PATH="$mock_bin:$PATH"
         export MOCK_CURL_STATE_DIR="$state_dir"
         export MOCK_CURL_MODE="${MOCK_CURL_MODE:-success}"
@@ -323,6 +336,7 @@ SLEEPSTUB
     mkdir -p "$state_dir" "$run_dir"
 
     (
+        fix_mock_shebangs "$mock_bin"
         export PATH="$mock_bin:$PATH"
         export MOCK_CURL_STATE_DIR="$state_dir"
         export MOCK_SLEEP_LOG="$test_dir/sleep.log"
@@ -404,6 +418,7 @@ SLEEPSTUB
     mkdir -p "$state_dir" "$run_dir"
 
     (
+        fix_mock_shebangs "$mock_bin"
         export PATH="$mock_bin:$PATH"
         export MOCK_CURL_STATE_DIR="$state_dir"
         export NVD_MIRROR_URL="http://mock.test/api"
@@ -471,6 +486,7 @@ SLEEPSTUB
     mkdir -p "$state_dir" "$run_dir"
 
     (
+        fix_mock_shebangs "$mock_bin"
         export PATH="$mock_bin:$PATH"
         export MOCK_CURL_STATE_DIR="$state_dir"
         export NVD_MIRROR_URL="http://mock.test/api"

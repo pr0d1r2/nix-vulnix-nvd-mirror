@@ -11,6 +11,18 @@ failed=0
 pass() { echo "PASS: $1"; passed=$((passed + 1)); }
 fail() { echo "FAIL: $1" >&2; failed=$((failed + 1)); }
 
+# Generated mock helpers use `#!/usr/bin/env bash`, but a hermetic Nix build
+# sandbox has no /usr/bin/env. Rewrite each mock's shebang to the bash actually
+# on PATH so the tests run both locally and under `nix flake check`.
+fix_mock_shebangs() {
+    local d="$1" f bash_path
+    bash_path="$(command -v bash)"
+    for f in "$d"/*; do
+        [ -e "$f" ] || continue
+        sed "1s|^#!/usr/bin/env bash\$|#!$bash_path|" "$f" > "$f.tmp" && mv "$f.tmp" "$f" && chmod +x "$f"
+    done
+}
+
 current_year=$(date +%Y)
 start_year=$((current_year - 5))
 
@@ -78,6 +90,7 @@ test_health_check_passes() {
 
     local exit_code=0
     (
+        fix_mock_shebangs "$mock_bin"
         export PATH="$mock_bin:$PATH"
         export PAGES_URL="http://mock.test"
         bash "$SCRIPT_DIR/health_check.sh"
@@ -98,6 +111,7 @@ test_health_check_fails_unreachable() {
 
     local exit_code=0
     (
+        fix_mock_shebangs "$mock_bin"
         export PATH="$mock_bin:$PATH"
         export PAGES_URL="http://mock.test"
         bash "$SCRIPT_DIR/health_check.sh"
@@ -118,6 +132,7 @@ test_health_check_fails_corrupt() {
 
     local exit_code=0
     (
+        fix_mock_shebangs "$mock_bin"
         export PATH="$mock_bin:$PATH"
         export PAGES_URL="http://mock.test"
         bash "$SCRIPT_DIR/health_check.sh"
@@ -163,6 +178,7 @@ MOCK
     local log_file="$WORK_DIR/count_urls.log"
 
     (
+        fix_mock_shebangs "$mock_bin"
         export PATH="$mock_bin:$PATH"
         export PAGES_URL="http://mock.test"
         export MOCK_LOG="$log_file"
@@ -213,6 +229,7 @@ MOCK
     local log_file="$WORK_DIR/url_override.log"
 
     (
+        fix_mock_shebangs "$mock_bin"
         export PATH="$mock_bin:$PATH"
         export PAGES_URL="http://custom.pages.test/mirror"
         export MOCK_LOG="$log_file"

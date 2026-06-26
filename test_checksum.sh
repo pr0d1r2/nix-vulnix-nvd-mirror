@@ -11,6 +11,18 @@ failed=0
 pass() { echo "PASS: $1"; passed=$((passed + 1)); }
 fail() { echo "FAIL: $1" >&2; failed=$((failed + 1)); }
 
+# Generated mock helpers use `#!/usr/bin/env bash`, but a hermetic Nix build
+# sandbox has no /usr/bin/env. Rewrite each mock's shebang to the bash actually
+# on PATH so the tests run both locally and under `nix flake check`.
+fix_mock_shebangs() {
+    local d="$1" f bash_path
+    bash_path="$(command -v bash)"
+    for f in "$d"/*; do
+        [ -e "$f" ] || continue
+        sed "1s|^#!/usr/bin/env bash\$|#!$bash_path|" "$f" > "$f.tmp" && mv "$f.tmp" "$f" && chmod +x "$f"
+    done
+}
+
 current_year=$(date +%Y)
 start_year=$((current_year - 5))
 
@@ -43,6 +55,7 @@ chmod +x "$MOCK_BIN/sleep"
 
 # Run download.sh with mock curl
 (
+    fix_mock_shebangs "$MOCK_BIN"
     export PATH="$MOCK_BIN:$PATH"
     export NVD_MIRROR_URL="http://mock.test/api"
     export NVD_RATE_DELAY=0
