@@ -32,18 +32,19 @@ mkdir -p "$MOCK_BIN"
 
 cat > "$MOCK_BIN/curl" <<'MOCK'
 #!/usr/bin/env bash
+# New per-page contract (SPEC §V.28): body to -o, HTTP code to stdout (-w).
 dest=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -o) dest="$2"; shift 2 ;;
-        -H) shift 2 ;;
+        -D|-w|-H|-X|-d) shift 2 ;;
         --retry|--retry-delay|--max-time) shift 2 ;;
         -*) shift ;;
         *) shift ;;
     esac
 done
-echo '{"totalResults": 1, "resultsPerPage": 1, "startIndex": 0, "vulnerabilities": [{"cve": {"id": "CVE-2024-0001"}}]}' > "$dest"
-exit 0
+echo '{"totalResults": 1, "resultsPerPage": 1, "startIndex": 0, "vulnerabilities": [{"cve": {"id": "CVE-2024-0001", "lastModified": "2024-01-01T00:00:00"}}]}' > "$dest"
+printf '200'
 MOCK
 chmod +x "$MOCK_BIN/curl"
 
