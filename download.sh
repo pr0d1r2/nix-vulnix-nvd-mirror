@@ -218,30 +218,36 @@ seed_prior_state() {
 # buckets, and in December pre-publishes an empty next-year feed.
 merge_window() {
     local window_gz="$1"
-    local win year bucket existing win_year merged count f y
-    win=$(gzip -dc "$window_gz" | jq '.vulnerabilities // []')
+    local year bucket f y
+    # §V.50 — file/stream-based merge: feed payloads (25k+ CVEs, ~100MB) must
+    # never pass through a shell variable or `jq --argjson` (argv overflow ->
+    # crash). jq reads from files (--slurpfile) so memory/argv stay bounded.
+    local d="$staging_dir/merge"
+    rm -rf "$d"
+    mkdir -p "$d"
+    gzip -dc "$window_gz" | jq '.vulnerabilities // []' > "$d/win.json"
 
     # modified feed == the window contents (§V.38).
-    printf '%s' "$win" | jq \
-        '{resultsPerPage: length, startIndex: 0, totalResults: length, vulnerabilities: .}' \
-        | gzip -n > "$outdir/nvdcve-2.0-modified.json.gz"
+    jq '{resultsPerPage: length, startIndex: 0, totalResults: length, vulnerabilities: .}' \
+        "$d/win.json" | gzip -n > "$outdir/nvdcve-2.0-modified.json.gz"
 
     for year in $(seq "$start_year" "$current_year"); do
         bucket="$outdir/nvdcve-2.0-${year}.json.gz"
         if [ -f "$bucket" ]; then
-            existing=$(gzip -dc "$bucket" | jq '.vulnerabilities // []')
+            gzip -dc "$bucket" | jq '.vulnerabilities // []' > "$d/existing.json"
         else
-            existing='[]'
+            echo '[]' > "$d/existing.json"
         fi
-        win_year=$(printf '%s' "$win" \
-            | jq --arg y "CVE-${year}-" '[.[] | select(.cve.id | startswith($y))]')
-        merged=$(jq -n --argjson a "$existing" --argjson b "$win_year" \
-            '($a + $b) | group_by(.cve.id) | map(max_by(.cve.lastModified))')
-        count=$(printf '%s' "$merged" | jq 'length')
-        printf '%s' "$merged" | jq --argjson t "$count" \
-            '{resultsPerPage: length, startIndex: 0, totalResults: $t, vulnerabilities: .}' \
-            | gzip -n > "$bucket"
+        jq --arg y "CVE-${year}-" '[.[] | select(.cve.id | startswith($y))]' \
+            "$d/win.json" > "$d/winyear.json"
+        # Upsert by CVE id, newest lastModified wins (§V.38), all from files.
+        jq -n --slurpfile a "$d/existing.json" --slurpfile b "$d/winyear.json" \
+            '($a[0] + $b[0]) | group_by(.cve.id) | map(max_by(.cve.lastModified))
+             | {resultsPerPage: length, startIndex: 0, totalResults: length, vulnerabilities: .}' \
+            | gzip -n > "$d/bucket.gz"
+        mv "$d/bucket.gz" "$bucket"
     done
+    rm -rf "$d"
 
     # Prune buckets whose id-year is outside the rolling window (§V.38).
     for f in "$outdir"/nvdcve-2.0-[0-9][0-9][0-9][0-9].json.gz; do
