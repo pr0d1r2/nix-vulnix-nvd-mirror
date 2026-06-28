@@ -634,10 +634,10 @@ test_merge_scales_large_window() {
     local test_dir="$WORK_DIR/test_large"
     mkdir -p "$test_dir"
 
-    # One window of 20000 CVE-2024-* (~1.4MB) — exceeds the single-argv limit
-    # (128KiB Linux / ~1MB macOS), so a `jq --argjson "$var"` merge crashes
-    # (exit 139 / E2BIG). File/stream-based merge (§V.50) handles it.
-    MOCK_CURL_TOTAL=20000 NVD_RESULTS_PER_PAGE=20000 run_download "$test_dir"
+    # 20000 CVE-2024-* across 4 pages (~1.4MB) — exercises both _fetch_api_feed's
+    # multi-page aggregation and merge_window. A shell-var/`--argjson` path
+    # crashes at this size (exit 139 / E2BIG); file/stream-based (§V.50) handles it.
+    MOCK_CURL_TOTAL=20000 NVD_RESULTS_PER_PAGE=5000 run_download "$test_dir"
 
     local bucket="$test_dir/run/public/nvdcve-2.0-2024.json.gz"
     local n
@@ -646,6 +646,28 @@ test_merge_scales_large_window() {
         pass "§V.50 large window: 20000-CVE window merged without argv overflow"
     else
         fail "§V.50 large window: expected 20000 in 2024 bucket, got ${n:-none}"
+    fi
+}
+
+# ── Test 23: daily lastMod window is small, not the 120-day max (§V.35) ─────
+
+test_daily_window_is_small() {
+    local test_dir="$WORK_DIR/test_daily_window"
+    mkdir -p "$test_dir"
+    run_download "$test_dir"
+
+    local line s e sd ed days
+    line=$(grep 'lastModStartDate' "$test_dir/state/urls.log" | head -1)
+    s=$(echo "$line" | sed -n 's/.*lastModStartDate=\([^&]*\).*/\1/p')
+    e=$(echo "$line" | sed -n 's/.*lastModEndDate=\([^&]*\).*/\1/p')
+    sd=$(date -u -d "${s%%T*}" +%s 2>/dev/null || date -u -j -f "%Y-%m-%d" "${s%%T*}" +%s)
+    ed=$(date -u -d "${e%%T*}" +%s 2>/dev/null || date -u -j -f "%Y-%m-%d" "${e%%T*}" +%s)
+    days=$(( (ed - sd) / 86400 ))
+
+    if [ "$days" -ge 28 ] && [ "$days" -le 31 ]; then
+        pass "daily window: lastMod lookback is ~30 days ($days), not the 120 max"
+    else
+        fail "daily window: expected ~30 days, got $days"
     fi
 }
 
@@ -676,6 +698,7 @@ test_prune_out_of_window
 test_bootstrap_when_empty
 test_modified_is_window
 test_merge_scales_large_window
+test_daily_window_is_small
 
 echo ""
 echo "Results: $passed passed, $failed failed"

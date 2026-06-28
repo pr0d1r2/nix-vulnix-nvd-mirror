@@ -17,7 +17,11 @@ page_max_delay="${PAGE_MAX_DELAY:-300}"
 # Checkpoint staging lives OUTSIDE the deployed public/ (§V.30, §V.32).
 staging_dir="${STAGING_DIR:-${TMPDIR:-/tmp}/nvd-part}"
 # Incremental mirror (§V.2, §V.35-§V.39).
+# window_days = NVD's hard cap / bootstrap chunk size (§V.36). daily_window_days
+# = the daily lastMod lookback (§V.35): small enough to stay fast + bounded,
+# large enough to self-heal multi-day outages.
 window_days="${WINDOW_DAYS:-120}"
+daily_window_days="${DAILY_WINDOW_DAYS:-30}"
 pages_url="${PAGES_URL:-https://pr0d1r2.github.io/nix-vulnix-nvd-mirror}"
 is_bootstrap=0
 
@@ -112,7 +116,7 @@ _fetch_page() {
 _fetch_api_feed() {
     local url="$1"
     local dest="$2"
-    local feed stage ckpt start_index total_results agg count
+    local feed stage ckpt start_index total_results count
 
     feed=$(basename "$dest" .json.gz)
     stage="${staging_dir}/${feed}"
@@ -143,9 +147,12 @@ _fetch_api_feed() {
     done
 
     # Aggregate all pages, dedup by CVE id keeping newest lastModified (§V.31).
-    agg=$(cat "$stage"/page-*.json 2>/dev/null \
-        | jq -s 'add // [] | group_by(.cve.id) | map(max_by(.cve.lastModified))')
-    count=$(printf '%s' "$agg" | jq 'length')
+    # §V.50 — a window can be 100k+ CVEs (~100MB); never capture it into a shell
+    # variable (bash segfaults). Stream pages -> file, process jq from files.
+    cat "$stage"/page-*.json 2>/dev/null \
+        | jq -s 'add // [] | group_by(.cve.id) | map(max_by(.cve.lastModified))' \
+        > "$stage/agg.json"
+    count=$(jq 'length' "$stage/agg.json")
 
     # Completeness guard: deduped count must meet the reported total (§V.31).
     if [ "$total_results" -gt 0 ] && [ "$count" -lt "$total_results" ]; then
@@ -153,9 +160,8 @@ _fetch_api_feed() {
     fi
 
     # Deterministic gzip (§V.41) into staging, validate, atomic move (§V.32).
-    printf '%s' "$agg" | jq --argjson t "$count" \
-        '{resultsPerPage: length, startIndex: 0, totalResults: $t, vulnerabilities: .}' \
-        | gzip -n > "$stage/feed.json.gz"
+    jq '{resultsPerPage: length, startIndex: 0, totalResults: length, vulnerabilities: .}' \
+        "$stage/agg.json" | gzip -n > "$stage/feed.json.gz"
     if ! gzip -t "$stage/feed.json.gz" 2>/dev/null; then
         return 1
     fi
@@ -299,11 +305,11 @@ if [ "$is_bootstrap" -eq 1 ]; then
     bootstrap
 fi
 
-# Daily incremental: a single ≤120-day lastMod window (§V.35), then upsert.
+# Daily incremental: a single small lastMod window (§V.35), then upsert.
 win_gz="$staging_dir/window.json.gz"
 rm -f "$win_gz"
 download_with_retry \
-    "${nvd_api_url}?lastModStartDate=$(day_start $((window_days - 1)))&lastModEndDate=$(now_end)" \
+    "${nvd_api_url}?lastModStartDate=$(day_start $((daily_window_days - 1)))&lastModEndDate=$(now_end)" \
     "$win_gz"
 merge_window "$win_gz"
 rm -f "$win_gz"
