@@ -35,6 +35,7 @@ setup_mocks() {
 # Faithful-ish NVD mock for the per-page fetch contract (SPEC §V.28-§V.32):
 # download.sh calls `curl -sS -D <hdr> -o <body> -w '%{http_code}' ... <url>`,
 # reads the body from -o, and the HTTP code from stdout (-w).
+echo "$@" >> "${MOCK_CURL_STATE_DIR}/full_args.log"
 dest=""
 url=""
 hdr=""
@@ -57,6 +58,20 @@ echo "$url" >> "${MOCK_CURL_STATE_DIR}/urls.log"
 # Notification path: download.sh's webhook POST has no -o.
 if [[ -z "$dest" ]]; then
     echo "$url" >> "${MOCK_CURL_STATE_DIR}/notifications.log"
+    exit 0
+fi
+
+# Prior-state seed (§V.37): pages_url serves a gzipped published feed.
+if [[ "$url" == *mock.pages* || "$url" == *github.io* ]]; then
+    if [[ "${MOCK_PAGES_EMPTY:-0}" == "1" ]]; then
+        exit 22   # simulate 404 -> no prior state -> bootstrap
+    fi
+    if [[ "${MOCK_SEED_CVE:-0}" == "1" && "$url" == *2024* ]]; then
+        # existing bucket already holds CVE-2024-00000 with an OLD lastModified
+        echo '{"resultsPerPage":1,"startIndex":0,"totalResults":1,"vulnerabilities":[{"cve":{"id":"CVE-2024-00000","lastModified":"2020-01-01T00:00:00"}}]}' | gzip > "$dest"
+        exit 0
+    fi
+    echo '{"resultsPerPage":0,"startIndex":0,"totalResults":0,"vulnerabilities":[]}' | gzip > "$dest"
     exit 0
 fi
 
@@ -109,6 +124,10 @@ case "$mode" in
             printf '429'; exit 0
         fi
         ok_body; printf '200'; exit 0 ;;
+    upsert)
+        # window re-reports CVE-2024-00000 with a NEWER lastModified + a new CVE
+        printf '{"totalResults":2,"resultsPerPage":2,"startIndex":0,"vulnerabilities":[{"cve":{"id":"CVE-2024-00000","lastModified":"2024-06-01T00:00:00"}},{"cve":{"id":"CVE-2024-00001","lastModified":"2024-06-01T00:00:00"}}]}' > "$dest"
+        printf '200'; exit 0 ;;
     *)
         ok_body; printf '200'; exit 0 ;;
 esac
@@ -142,8 +161,14 @@ run_download() {
         export MOCK_CURL_FAIL_COUNT="${MOCK_CURL_FAIL_COUNT:-0}"
         export MOCK_SLEEP_LOG="$sleep_log"
         export NVD_MIRROR_URL="${NVD_MIRROR_URL:-http://mock.test/api}"
+        export PAGES_URL="${PAGES_URL:-http://mock.pages}"
         export NVD_RATE_DELAY=0
         export NOTIFICATION_WEBHOOK_URL="${NOTIFICATION_WEBHOOK_URL:-}"
+        export MOCK_PAGES_EMPTY="${MOCK_PAGES_EMPTY:-0}"
+        export MOCK_SEED_CVE="${MOCK_SEED_CVE:-0}"
+        export MOCK_CURL_TOTAL="${MOCK_CURL_TOTAL:-0}"
+        export NVD_API_KEY="${NVD_API_KEY:-}"
+        export NVD_RESULTS_PER_PAGE="${NVD_RESULTS_PER_PAGE:-2000}"
         cd "$run_dir"
         bash "$SCRIPT_DIR/download.sh"
     )
@@ -327,155 +352,48 @@ test_corrupt_gzip_retry() {
     fi
 }
 
-# ── Test 8: curl receives required resilience flags ────────────────────────
+# ── Test 8: NVD page fetch carries the resilience flags (§V.4) ─────────────
 
 test_curl_flags() {
     local test_dir="$WORK_DIR/test_curl_flags"
     mkdir -p "$test_dir"
 
-    local mock_bin="$WORK_DIR/mock_bin_flags"
-    mkdir -p "$mock_bin"
+    run_download "$test_dir"
 
-    cat > "$mock_bin/curl" <<'FLAGCURL'
-#!/usr/bin/env bash
-echo "$@" >> "${MOCK_CURL_STATE_DIR}/full_args.log"
-dest=""
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -o) dest="$2"; shift 2 ;;
-        -D|-w|-H|-X|-d) shift 2 ;;
-        --retry|--retry-delay|--max-time) shift 2 ;;
-        -*) shift ;;
-        *) shift ;;
-    esac
-done
-echo '{"totalResults": 0, "resultsPerPage": 0, "startIndex": 0, "vulnerabilities": []}' > "$dest"
-printf '200'
-FLAGCURL
-    chmod +x "$mock_bin/curl"
-
-    cat > "$mock_bin/sleep" <<'SLEEPSTUB'
-#!/usr/bin/env bash
-:
-SLEEPSTUB
-    chmod +x "$mock_bin/sleep"
-
-    local state_dir="$test_dir/state"
-    local run_dir="$test_dir/run"
-    mkdir -p "$state_dir" "$run_dir"
-
-    (
-        fix_mock_shebangs "$mock_bin"
-        export PATH="$mock_bin:$PATH"
-        export MOCK_CURL_STATE_DIR="$state_dir"
-        export MOCK_SLEEP_LOG="$test_dir/sleep.log"
-        export NVD_MIRROR_URL="http://mock.test/api"
-        export NVD_RATE_DELAY=0
-        cd "$run_dir"
-        bash "$SCRIPT_DIR/download.sh"
-    )
-
-    local args_log="$state_dir/full_args.log"
-    local first_call
-    first_call=$(head -1 "$args_log")
+    # Check the NVD window page fetch (url has lastModStartDate), not the seed.
+    local nvd_call
+    nvd_call=$(grep -- 'lastModStartDate' "$test_dir/state/full_args.log" | head -1)
 
     local all_ok=true
-    if ! echo "$first_call" | grep -q -- '--retry 3'; then
-        fail "curl flags: missing --retry 3"
-        all_ok=false
-    fi
-    if ! echo "$first_call" | grep -q -- '--retry-delay 60'; then
-        fail "curl flags: missing --retry-delay 60"
-        all_ok=false
-    fi
-    if ! echo "$first_call" | grep -q -- '--max-time 300'; then
-        fail "curl flags: missing --max-time 300"
-        all_ok=false
-    fi
+    local flag
+    for flag in '--retry 3' '--retry-delay 60' '--max-time 300'; do
+        if ! echo "$nvd_call" | grep -q -- "$flag"; then
+            fail "curl flags: missing $flag"
+            all_ok=false
+        fi
+    done
 
     if $all_ok; then
         pass "curl flags: --retry 3 --retry-delay 60 --max-time 300 present"
     fi
 }
 
-# ── Test 9: API pagination fetches all pages ───────────────────────────────
+# ── Test 9: pagination aggregates all pages into the id-year bucket ─────────
 
 test_api_pagination() {
     local test_dir="$WORK_DIR/test_pagination"
     mkdir -p "$test_dir"
 
-    local mock_bin="$WORK_DIR/mock_bin_pagination"
-    mkdir -p "$mock_bin"
+    # Window of 2 CVE-2024-* across 2 pages (1/page) -> both land in 2024 bucket.
+    MOCK_CURL_TOTAL=2 NVD_RESULTS_PER_PAGE=1 run_download "$test_dir"
 
-    cat > "$mock_bin/curl" <<'PAGECURL'
-#!/usr/bin/env bash
-dest=""
-url=""
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -o) dest="$2"; shift 2 ;;
-        -D|-w|-H|-X|-d) shift 2 ;;
-        --retry|--retry-delay|--max-time) shift 2 ;;
-        -*) shift ;;
-        *) url="$1"; shift ;;
-    esac
-done
-
-echo "$url" >> "${MOCK_CURL_STATE_DIR}/urls.log"
-
-start_index=0
-if [[ "$url" =~ startIndex=([0-9]+) ]]; then
-    start_index="${BASH_REMATCH[1]}"
-fi
-
-if [ "$start_index" -eq 0 ]; then
-    echo '{"totalResults": 2, "resultsPerPage": 1, "startIndex": 0, "vulnerabilities": [{"cve": {"id": "CVE-0001", "lastModified": "2024-01-01T00:00:00"}}]}' > "$dest"
-else
-    echo '{"totalResults": 2, "resultsPerPage": 1, "startIndex": 1, "vulnerabilities": [{"cve": {"id": "CVE-0002", "lastModified": "2024-01-01T00:00:00"}}]}' > "$dest"
-fi
-printf '200'
-PAGECURL
-    chmod +x "$mock_bin/curl"
-
-    cat > "$mock_bin/sleep" <<'SLEEPSTUB'
-#!/usr/bin/env bash
-:
-SLEEPSTUB
-    chmod +x "$mock_bin/sleep"
-
-    local state_dir="$test_dir/state"
-    local run_dir="$test_dir/run"
-    mkdir -p "$state_dir" "$run_dir"
-
-    (
-        fix_mock_shebangs "$mock_bin"
-        export PATH="$mock_bin:$PATH"
-        export MOCK_CURL_STATE_DIR="$state_dir"
-        export NVD_MIRROR_URL="http://mock.test/api"
-        export NVD_RESULTS_PER_PAGE=1
-        export NVD_RATE_DELAY=0
-        cd "$run_dir"
-        bash "$SCRIPT_DIR/download.sh"
-    )
-
-    local url_count
-    url_count=$(wc -l < "$state_dir/urls.log")
-    local expected_feeds=$((current_year - start_year + 1 + 1))
-    local expected_calls=$((expected_feeds * 2))
-
-    if [[ "$url_count" -eq "$expected_calls" ]]; then
-        pass "API pagination: $expected_calls API calls for $expected_feeds feeds (2 pages each)"
+    local bucket="$test_dir/run/public/nvdcve-2.0-2024.json.gz"
+    local n
+    n=$(gzip -dc "$bucket" | jq '.vulnerabilities | length')
+    if [[ "$n" -eq 2 ]]; then
+        pass "API pagination: 2 CVEs aggregated across pages into the 2024 bucket"
     else
-        fail "API pagination: expected $expected_calls API calls, got $url_count"
-    fi
-
-    local first_feed="$run_dir/public/nvdcve-2.0-${start_year}.json.gz"
-    local vuln_count
-    vuln_count=$(gzip -dc "$first_feed" | jq '.vulnerabilities | length')
-    if [[ "$vuln_count" -eq 2 ]]; then
-        pass "API pagination: all vulnerabilities aggregated across pages"
-    else
-        fail "API pagination: expected 2 vulnerabilities, got $vuln_count"
+        fail "API pagination: expected 2 in 2024 bucket, got $n"
     fi
 }
 
@@ -485,50 +403,9 @@ test_api_key_header() {
     local test_dir="$WORK_DIR/test_api_key"
     mkdir -p "$test_dir"
 
-    local mock_bin="$WORK_DIR/mock_bin_apikey"
-    mkdir -p "$mock_bin"
+    NVD_API_KEY="test-key-abc123" run_download "$test_dir"
 
-    cat > "$mock_bin/curl" <<'KEYCURL'
-#!/usr/bin/env bash
-echo "$@" >> "${MOCK_CURL_STATE_DIR}/full_args.log"
-dest=""
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -o) dest="$2"; shift 2 ;;
-        -D|-w|-H|-X|-d) shift 2 ;;
-        --retry|--retry-delay|--max-time) shift 2 ;;
-        -*) shift ;;
-        *) shift ;;
-    esac
-done
-echo '{"totalResults": 0, "resultsPerPage": 0, "startIndex": 0, "vulnerabilities": []}' > "$dest"
-printf '200'
-KEYCURL
-    chmod +x "$mock_bin/curl"
-
-    cat > "$mock_bin/sleep" <<'SLEEPSTUB'
-#!/usr/bin/env bash
-:
-SLEEPSTUB
-    chmod +x "$mock_bin/sleep"
-
-    local state_dir="$test_dir/state"
-    local run_dir="$test_dir/run"
-    mkdir -p "$state_dir" "$run_dir"
-
-    (
-        fix_mock_shebangs "$mock_bin"
-        export PATH="$mock_bin:$PATH"
-        export MOCK_CURL_STATE_DIR="$state_dir"
-        export NVD_MIRROR_URL="http://mock.test/api"
-        export NVD_API_KEY="test-key-abc123"
-        export NVD_RATE_DELAY=0
-        cd "$run_dir"
-        bash "$SCRIPT_DIR/download.sh"
-    )
-
-    local args_log="$state_dir/full_args.log"
-    if grep -q 'apiKey: test-key-abc123' "$args_log"; then
+    if grep -q 'apiKey: test-key-abc123' "$test_dir/state/full_args.log"; then
         pass "API key header: apiKey header sent with curl"
     else
         fail "API key header: expected apiKey header in curl args"
@@ -633,6 +510,120 @@ test_staging_outside_public() {
     fi
 }
 
+# ── Test 16: no NVD query exceeds 120 days (§V.36 — §B.5 regression guard) ──
+
+test_window_max_120_days() {
+    local test_dir="$WORK_DIR/test_window120"
+    mkdir -p "$test_dir"
+    run_download "$test_dir"
+
+    local urls="$test_dir/state/urls.log"
+    local bad=0 line s e sd ed days
+    while IFS= read -r line; do
+        s=$(echo "$line" | sed -n 's/.*\(lastMod\|pub\)StartDate=\([^&]*\).*/\2/p')
+        e=$(echo "$line" | sed -n 's/.*\(lastMod\|pub\)EndDate=\([^&]*\).*/\2/p')
+        [ -n "$s" ] && [ -n "$e" ] || continue
+        sd=$(date -u -d "${s%%T*}" +%s 2>/dev/null || date -u -j -f "%Y-%m-%d" "${s%%T*}" +%s)
+        ed=$(date -u -d "${e%%T*}" +%s 2>/dev/null || date -u -j -f "%Y-%m-%d" "${e%%T*}" +%s)
+        days=$(( (ed - sd) / 86400 ))
+        [ "$days" -gt 120 ] && bad=$((bad + 1))
+    done < "$urls"
+
+    if [ "$bad" -eq 0 ]; then
+        pass "120-day limit: every NVD query window is <= 120 days (§V.36)"
+    else
+        fail "120-day limit: $bad NVD queries exceed 120 days"
+    fi
+}
+
+# ── Test 17: merge upserts by CVE id, newest lastModified wins (§V.38) ──────
+
+test_upsert_newer_wins() {
+    local test_dir="$WORK_DIR/test_upsert"
+    mkdir -p "$test_dir"
+
+    # seed has CVE-2024-00000 @ 2020; window re-reports it @ 2024-06 + a new CVE.
+    MOCK_SEED_CVE=1 MOCK_CURL_MODE=upsert run_download "$test_dir"
+
+    local bucket="$test_dir/run/public/nvdcve-2.0-2024.json.gz"
+    local n lm
+    n=$(gzip -dc "$bucket" | jq '.vulnerabilities | length')
+    lm=$(gzip -dc "$bucket" | jq -r '.vulnerabilities[] | select(.cve.id=="CVE-2024-00000") | .cve.lastModified')
+
+    if [[ "$n" -eq 2 && "$lm" == "2024-06-01T00:00:00" ]]; then
+        pass "upsert: newer lastModified wins, new CVE inserted (2 entries in 2024)"
+    else
+        fail "upsert: expected 2 entries + newer lastModified, got n=$n lm=$lm"
+    fi
+}
+
+# ── Test 18: in-window year with no CVEs is an empty-but-valid feed (§V.5) ──
+
+test_empty_year_feed() {
+    local test_dir="$WORK_DIR/test_empty_year"
+    mkdir -p "$test_dir"
+    run_download "$test_dir"
+
+    local f="$test_dir/run/public/nvdcve-2.0-${start_year}.json.gz"
+    if [ -f "$f" ] && gzip -t "$f" 2>/dev/null \
+        && [ "$(gzip -dc "$f" | jq '.totalResults')" -eq 0 ]; then
+        pass "empty-year: ${start_year} with no CVEs is an empty-but-valid feed"
+    else
+        fail "empty-year: expected empty valid feed for ${start_year}"
+    fi
+}
+
+# ── Test 19: out-of-window id-year buckets are pruned (§V.38) ───────────────
+
+test_prune_out_of_window() {
+    local test_dir="$WORK_DIR/test_prune"
+    mkdir -p "$test_dir/run/public"
+    echo '{"resultsPerPage":0,"startIndex":0,"totalResults":0,"vulnerabilities":[]}' \
+        | gzip > "$test_dir/run/public/nvdcve-2.0-2019.json.gz"
+
+    run_download "$test_dir"
+
+    if [ ! -f "$test_dir/run/public/nvdcve-2.0-2019.json.gz" ]; then
+        pass "prune: out-of-window id-year bucket (2019) removed"
+    else
+        fail "prune: 2019 bucket should have been pruned"
+    fi
+}
+
+# ── Test 20: empty prior state triggers bootstrap backfill (§V.39) ─────────
+
+test_bootstrap_when_empty() {
+    local test_dir="$WORK_DIR/test_bootstrap"
+    mkdir -p "$test_dir"
+
+    MOCK_PAGES_EMPTY=1 run_download "$test_dir"
+
+    local pub_calls feeds
+    pub_calls=$(grep -c 'pubStartDate' "$test_dir/state/urls.log")
+    feeds=$(find "$test_dir/run/public" -name 'nvdcve-2.0-*.json.gz' | wc -l)
+    if [ "$pub_calls" -ge 2 ] && [ "$feeds" -ge 7 ]; then
+        pass "bootstrap: empty prior state -> sequential pub-window backfill ($pub_calls windows)"
+    else
+        fail "bootstrap: expected >=2 pub windows + >=7 feeds, got pub=$pub_calls feeds=$feeds"
+    fi
+}
+
+# ── Test 21: modified feed mirrors the fetched window (§V.38) ──────────────
+
+test_modified_is_window() {
+    local test_dir="$WORK_DIR/test_modified"
+    mkdir -p "$test_dir"
+    MOCK_CURL_TOTAL=3 run_download "$test_dir"
+
+    local n
+    n=$(gzip -dc "$test_dir/run/public/nvdcve-2.0-modified.json.gz" | jq '.totalResults')
+    if [[ "$n" -eq 3 ]]; then
+        pass "modified feed: reflects the 3-CVE window"
+    else
+        fail "modified feed: expected 3, got $n"
+    fi
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "=== test_download.sh ==="
@@ -653,6 +644,12 @@ test_no_notification_without_webhook
 test_retry_after
 test_gzip_determinism
 test_staging_outside_public
+test_window_max_120_days
+test_upsert_newer_wins
+test_empty_year_feed
+test_prune_out_of_window
+test_bootstrap_when_empty
+test_modified_is_window
 
 echo ""
 echo "Results: $passed passed, $failed failed"

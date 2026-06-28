@@ -16,6 +16,21 @@ page_base_delay="${PAGE_BASE_DELAY:-5}"
 page_max_delay="${PAGE_MAX_DELAY:-300}"
 # Checkpoint staging lives OUTSIDE the deployed public/ (§V.30, §V.32).
 staging_dir="${STAGING_DIR:-${TMPDIR:-/tmp}/nvd-part}"
+# Incremental mirror (§V.2, §V.35-§V.39).
+window_days="${WINDOW_DAYS:-120}"
+pages_url="${PAGES_URL:-https://pr0d1r2.github.io/nix-vulnix-nvd-mirror}"
+is_bootstrap=0
+
+# Portable UTC date helpers (GNU date -d, BSD date -v fallback).
+day_start() {
+    date -u -d "$1 days ago" +%Y-%m-%dT00:00:00.000 2>/dev/null \
+        || date -u -v-"$1"d +%Y-%m-%dT00:00:00.000
+}
+day_end() {
+    date -u -d "$1 days ago" +%Y-%m-%dT23:59:59.999 2>/dev/null \
+        || date -u -v-"$1"d +%Y-%m-%dT23:59:59.999
+}
+now_end() { date -u +%Y-%m-%dT23:59:59.999; }
 
 send_failure_notification() {
     if [ -z "$notification_webhook_url" ]; then
@@ -178,19 +193,123 @@ download_with_retry() {
     done
 }
 
-for year in $(seq "$start_year" "$current_year"); do
-    download_with_retry \
-        "${nvd_api_url}?pubStartDate=${year}-01-01T00:00:00.000&pubEndDate=${year}-12-31T23:59:59.999" \
-        "$outdir/nvdcve-2.0-${year}.json.gz"
-done
+# Seed public/ from the previously-published mirror (§V.37): the accumulated
+# timeline. Empty/unreachable prior state ⇒ bootstrap.
+seed_prior_state() {
+    local year feed found=0
+    for year in $(seq "$start_year" "$current_year"); do
+        feed="nvdcve-2.0-${year}.json.gz"
+        if curl -fsSL --retry 3 --retry-delay 10 --max-time 120 \
+            -o "$outdir/$feed" "$pages_url/$feed" 2>/dev/null \
+            && gzip -t "$outdir/$feed" 2>/dev/null; then
+            found=$((found + 1))
+        else
+            rm -f "$outdir/$feed"
+        fi
+    done
+    if [ "$found" -eq 0 ]; then
+        is_bootstrap=1
+    fi
+}
 
-mod_start=$(date -u -d "120 days ago" +%Y-%m-%dT00:00:00.000 2>/dev/null || date -u -v-120d +%Y-%m-%dT00:00:00.000)
-mod_end=$(date -u +%Y-%m-%dT23:59:59.999)
+# Upsert a fetched window's CVEs into per-id-year buckets (§V.38): bucket =
+# the YYYY in the CVE id; newest lastModified wins. Rewrites the modified feed,
+# emits empty feeds for in-window years with no CVEs (§V.5), prunes out-of-window
+# buckets, and in December pre-publishes an empty next-year feed.
+merge_window() {
+    local window_gz="$1"
+    local win year bucket existing win_year merged count f y
+    win=$(gzip -dc "$window_gz" | jq '.vulnerabilities // []')
+
+    # modified feed == the window contents (§V.38).
+    printf '%s' "$win" | jq \
+        '{resultsPerPage: length, startIndex: 0, totalResults: length, vulnerabilities: .}' \
+        | gzip -n > "$outdir/nvdcve-2.0-modified.json.gz"
+
+    for year in $(seq "$start_year" "$current_year"); do
+        bucket="$outdir/nvdcve-2.0-${year}.json.gz"
+        if [ -f "$bucket" ]; then
+            existing=$(gzip -dc "$bucket" | jq '.vulnerabilities // []')
+        else
+            existing='[]'
+        fi
+        win_year=$(printf '%s' "$win" \
+            | jq --arg y "CVE-${year}-" '[.[] | select(.cve.id | startswith($y))]')
+        merged=$(jq -n --argjson a "$existing" --argjson b "$win_year" \
+            '($a + $b) | group_by(.cve.id) | map(max_by(.cve.lastModified))')
+        count=$(printf '%s' "$merged" | jq 'length')
+        printf '%s' "$merged" | jq --argjson t "$count" \
+            '{resultsPerPage: length, startIndex: 0, totalResults: $t, vulnerabilities: .}' \
+            | gzip -n > "$bucket"
+    done
+
+    # Prune buckets whose id-year is outside the rolling window (§V.38).
+    for f in "$outdir"/nvdcve-2.0-[0-9][0-9][0-9][0-9].json.gz; do
+        [ -e "$f" ] || continue
+        y=$(basename "$f" | sed -n 's/^nvdcve-2.0-\([0-9]\{4\}\)\.json\.gz$/\1/p')
+        [ -n "$y" ] || continue
+        if [ "$y" -lt "$start_year" ] || [ "$y" -gt "$current_year" ]; then
+            rm -f "$f"
+        fi
+    done
+
+    # December: pre-publish an empty next-year feed to survive the UTC rollover.
+    if [ "$(date -u +%m)" = "12" ]; then
+        local nyf="$outdir/nvdcve-2.0-$((current_year + 1)).json.gz"
+        [ -f "$nyf" ] || echo '[]' \
+            | jq '{resultsPerPage:0,startIndex:0,totalResults:0,vulnerabilities:[]}' \
+            | gzip -n > "$nyf"
+    fi
+}
+
+# One-time backfill via sequential ≤120-day pubStart/End windows (§V.39).
+bootstrap() {
+    local start_epoch now_epoch span off s e win_gz
+    start_epoch=$(date -u -d "${start_year}-01-01 UTC" +%s 2>/dev/null \
+        || date -u -j -f "%Y-%m-%d %H:%M:%S" "${start_year}-01-01 00:00:00" +%s)
+    now_epoch=$(date -u +%s)
+    span=$(( (now_epoch - start_epoch) / 86400 + 1 ))
+
+    off=0
+    while [ "$off" -lt "$span" ]; do
+        s=$(day_start $((off + window_days - 1)))
+        e=$(day_end "$off")
+        win_gz="$staging_dir/bootstrap-window.json.gz"
+        rm -f "$win_gz"
+        download_with_retry \
+            "${nvd_api_url}?pubStartDate=${s}&pubEndDate=${e}" "$win_gz"
+        merge_window "$win_gz"
+        rm -f "$win_gz"
+        off=$((off + window_days))
+    done
+}
+
+mkdir -p "$staging_dir"
+
+seed_prior_state
+
+if [ "$is_bootstrap" -eq 1 ]; then
+    echo "No prior state found; bootstrapping full history..."
+    bootstrap
+fi
+
+# Daily incremental: a single ≤120-day lastMod window (§V.35), then upsert.
+win_gz="$staging_dir/window.json.gz"
+rm -f "$win_gz"
 download_with_retry \
-    "${nvd_api_url}?lastModStartDate=${mod_start}&lastModEndDate=${mod_end}" \
-    "$outdir/nvdcve-2.0-modified.json.gz"
+    "${nvd_api_url}?lastModStartDate=$(day_start $((window_days - 1)))&lastModEndDate=$(now_end)" \
+    "$win_gz"
+merge_window "$win_gz"
+rm -f "$win_gz"
+
+# Checksums over the published feeds (rebuild; window temps are not included).
+: > "$checksum_file"
+for f in "$outdir"/nvdcve-2.0-*.json.gz; do
+    [ -e "$f" ] || continue
+    echo "$(sha256sum "$f" | cut -d' ' -f1)  $(basename "$f")" >> "$checksum_file"
+done
 
 echo "Verifying checksums..."
 (cd "$outdir" && sha256sum -c sha256sums.txt)
 
-echo "Mirror complete: $(find "$outdir" -maxdepth 1 -name '*.json.gz' | wc -l) feeds downloaded"
+echo "Mirror complete: $(find "$outdir" -maxdepth 1 -name '*.json.gz' | wc -l) feeds"
