@@ -96,17 +96,21 @@ per_page=$(echo "$url" | sed -n 's/.*resultsPerPage=\([0-9]*\).*/\1/p'); per_pag
 start_index=$(echo "$url" | sed -n 's/.*startIndex=\([0-9]*\).*/\1/p'); start_index="${start_index:-0}"
 
 ok_body() {
-    local n=0 vulns="[]"
+    local n=0
     if [[ "$total" -gt 0 ]]; then
         local remaining=$(( total - start_index ))
         [[ "$remaining" -gt "$per_page" ]] && remaining=$per_page
         [[ "$remaining" -lt 0 ]] && remaining=0
         n=$remaining
-        # emit n distinct CVEs so dedup/count can be asserted
-        vulns=$(awk -v s="$start_index" -v n="$n" 'BEGIN{printf "[";for(i=0;i<n;i++){printf "%s{\"cve\":{\"id\":\"CVE-2024-%05d\",\"lastModified\":\"2024-01-01T00:00:00\"}}",(i?",":""),s+i}printf "]"}')
     fi
-    printf '{"totalResults": %s, "resultsPerPage": %s, "startIndex": %s, "vulnerabilities": %s}' \
-        "$total" "$per_page" "$start_index" "$vulns" > "$dest"
+    # Stream the page body straight to the file (no large shell variable, so the
+    # mock itself is argv-safe at scale).
+    {
+        printf '{"totalResults": %s, "resultsPerPage": %s, "startIndex": %s, "vulnerabilities": [' \
+            "$total" "$per_page" "$start_index"
+        awk -v s="$start_index" -v n="$n" 'BEGIN{for(i=0;i<n;i++){printf "%s{\"cve\":{\"id\":\"CVE-2024-%05d\",\"lastModified\":\"2024-01-01T00:00:00\"}}",(i?",":""),s+i}}'
+        printf ']}'
+    } > "$dest"
 }
 
 case "$mode" in
@@ -624,6 +628,27 @@ test_modified_is_window() {
     fi
 }
 
+# ── Test 22: merge scales to a large window (§V.50, §B.9 regression) ────────
+
+test_merge_scales_large_window() {
+    local test_dir="$WORK_DIR/test_large"
+    mkdir -p "$test_dir"
+
+    # One window of 20000 CVE-2024-* (~1.4MB) — exceeds the single-argv limit
+    # (128KiB Linux / ~1MB macOS), so a `jq --argjson "$var"` merge crashes
+    # (exit 139 / E2BIG). File/stream-based merge (§V.50) handles it.
+    MOCK_CURL_TOTAL=20000 NVD_RESULTS_PER_PAGE=20000 run_download "$test_dir"
+
+    local bucket="$test_dir/run/public/nvdcve-2.0-2024.json.gz"
+    local n
+    n=$(gzip -dc "$bucket" 2>/dev/null | jq '.vulnerabilities | length' 2>/dev/null)
+    if [[ "$n" -eq 20000 ]]; then
+        pass "§V.50 large window: 20000-CVE window merged without argv overflow"
+    else
+        fail "§V.50 large window: expected 20000 in 2024 bucket, got ${n:-none}"
+    fi
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "=== test_download.sh ==="
@@ -650,6 +675,7 @@ test_empty_year_feed
 test_prune_out_of_window
 test_bootstrap_when_empty
 test_modified_is_window
+test_merge_scales_large_window
 
 echo ""
 echo "Results: $passed passed, $failed failed"
