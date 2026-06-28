@@ -34,15 +34,21 @@ cat > "$MOCK_BIN/curl" <<'MOCK'
 #!/usr/bin/env bash
 # New per-page contract (SPEC §V.28): body to -o, HTTP code to stdout (-w).
 dest=""
+url=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -o) dest="$2"; shift 2 ;;
         -D|-w|-H|-X|-d) shift 2 ;;
         --retry|--retry-delay|--max-time) shift 2 ;;
         -*) shift ;;
-        *) shift ;;
+        *) url="$1"; shift ;;
     esac
 done
+# Prior-state seed (§V.37): pages_url serves a gzipped (empty) published feed.
+if [[ "$url" == *mock.pages* ]]; then
+    echo '{"resultsPerPage":0,"startIndex":0,"totalResults":0,"vulnerabilities":[]}' | gzip > "$dest"
+    exit 0
+fi
 echo '{"totalResults": 1, "resultsPerPage": 1, "startIndex": 0, "vulnerabilities": [{"cve": {"id": "CVE-2024-0001", "lastModified": "2024-01-01T00:00:00"}}]}' > "$dest"
 printf '200'
 MOCK
@@ -59,6 +65,7 @@ chmod +x "$MOCK_BIN/sleep"
     fix_mock_shebangs "$MOCK_BIN"
     export PATH="$MOCK_BIN:$PATH"
     export NVD_MIRROR_URL="http://mock.test/api"
+    export PAGES_URL="http://mock.pages"
     export NVD_RATE_DELAY=0
     cd "$WORK_DIR"
     bash "$SCRIPT_DIR/download.sh"
