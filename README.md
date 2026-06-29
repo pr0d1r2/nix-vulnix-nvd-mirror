@@ -29,6 +29,18 @@ and force-pushes it to `gh-pages` (orphan, same as the workflow).
 Get a free key at <https://nvd.nist.gov/developers/request-an-api-key>.
 `just store-key` rotates/replaces the stored key explicitly.
 
+## Development environment
+
+The repo ships a flake devShell with every tool (`just`, `shellcheck`, `bats`,
+`vulnix`, `cachix`, …) and a `.envrc` for auto-loading via
+[direnv](https://direnv.net) + [nix-direnv](https://github.com/nix-community/nix-direnv):
+
+```bash
+direnv allow      # once — trust .envrc; tools load automatically on cd
+# or, without direnv:
+nix develop       # enter the devShell manually
+```
+
 ## How it works
 
 Daily GitHub Actions workflow downloads NVD 2.0 JSON feeds and deploys
