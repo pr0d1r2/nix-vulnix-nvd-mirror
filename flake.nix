@@ -123,6 +123,16 @@
           health-check = mkCheck "health-check" [ pkgs.bash pkgs.gzip pkgs.gnugrep pkgs.coreutils ]
             "bash test_health_check.sh";
         };
+
+        # §V.19 — devShell carrying every CI/local tool (incl. just), auto-loaded
+        # via .envrc (§V.51). set-and-setting wiring (§V.20) is the rest of T17.
+        devShells.default = pkgs.mkShell {
+          packages = [
+            pkgs.just pkgs.bash pkgs.shellcheck pkgs.bats
+            pkgs.curl pkgs.jq pkgs.gzip pkgs.coreutils pkgs.gnugrep pkgs.findutils
+            pkgs.nix pkgs.vulnix pkgs.cachix
+          ];
+        };
       }
     );
 }
