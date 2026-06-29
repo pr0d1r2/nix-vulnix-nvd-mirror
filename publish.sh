@@ -16,19 +16,33 @@ repo_url="${REPO_URL:-git@github.com:pr0d1r2/nix-vulnix-nvd-mirror.git}"
 # With a key NVD allows 50 req/30s; pace faster than the 6s anon default.
 export NVD_RATE_DELAY="${NVD_RATE_DELAY:-2}"
 
-# Resolve the API key: explicit env wins; otherwise pull from the macOS Keychain
-# (the access prompt accepts Touch ID, and the key never lands in shell history,
-# env, or argv). Store it once with:
-#   read -rs -p 'NVD API key: ' k && \
-#     security add-generic-password -a "$USER" -s nvd-api-key -U -w "$k" && unset k
+# Resolve the API key (env -> Keychain -> first-run onboarding). The key never
+# lands in shell history, env, or argv; reading it from the Keychain triggers
+# the access prompt (accepts Touch ID).
 keychain_service="${NVD_KEYCHAIN_SERVICE:-nvd-api-key}"
+
+# 2. macOS Keychain (read prompts / Touch ID).
 if [ -z "${NVD_API_KEY:-}" ] && command -v security >/dev/null 2>&1; then
     NVD_API_KEY="$(security find-generic-password -a "$USER" -s "$keychain_service" -w 2>/dev/null || true)"
-    export NVD_API_KEY
 fi
 
-if [ -z "${NVD_API_KEY:-}" ]; then
-    echo "warning: NVD_API_KEY not set (env or Keychain '$keychain_service') — anonymous NVD limits apply (slow)." >&2
+# 3. First run: not found anywhere AND interactive -> prompt once, store, reuse.
+if [ -z "${NVD_API_KEY:-}" ] && command -v security >/dev/null 2>&1 && [ -t 0 ]; then
+    echo "NVD API key not found (env or Keychain '$keychain_service')." >&2
+    echo "Get one free at https://nvd.nist.gov/developers/request-an-api-key" >&2
+    NVD_API_KEY=""
+    read -rs -p "Paste NVD API key to store in Keychain (blank = skip, run anon): " NVD_API_KEY || true
+    echo >&2
+    if [ -n "$NVD_API_KEY" ]; then
+        security add-generic-password -a "$USER" -s "$keychain_service" -U -w "$NVD_API_KEY"
+        echo "stored in Keychain as '$keychain_service' (Touch-ID gated on future runs)." >&2
+    fi
+fi
+
+export NVD_API_KEY="${NVD_API_KEY:-}"
+
+if [ -z "$NVD_API_KEY" ]; then
+    echo "warning: no NVD_API_KEY — anonymous NVD limits apply (slow)." >&2
 fi
 
 echo ">> building feeds into public/ ..."

@@ -17,14 +17,17 @@ NVD heavily rate-limits datacenter / CI IPs, so the GitHub-hosted mirror job can
 be slow. To build + publish from your own machine instead:
 
 ```bash
-just store-key      # store your NVD API key in the macOS Keychain (Touch-ID gated)
-just publish        # build feeds + force-push public/ -> gh-pages
+just publish        # first run prompts for the NVD key + stores it; then builds + pushes
 ```
 
-`just publish` (or `./publish.sh`) resolves the key from `$NVD_API_KEY` or the
-macOS Keychain, builds `public/` via `download.sh`, and force-pushes it to
-`gh-pages` (orphan, same as the workflow). Get a free key at
-<https://nvd.nist.gov/developers/request-an-api-key>.
+`just publish` (or `./publish.sh`) resolves the NVD key **env → macOS Keychain →
+first-run prompt**: the first time, it asks for your key and saves it to the
+Keychain; every run after, it reads it back (Touch-ID gated) — the key never
+lands in shell history, env, or argv. It then builds `public/` via `download.sh`
+and force-pushes it to `gh-pages` (orphan, same as the workflow).
+
+Get a free key at <https://nvd.nist.gov/developers/request-an-api-key>.
+`just store-key` rotates/replaces the stored key explicitly.
 
 ## How it works
 
