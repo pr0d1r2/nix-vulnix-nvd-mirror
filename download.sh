@@ -21,7 +21,7 @@ staging_dir="${STAGING_DIR:-${TMPDIR:-/tmp}/nvd-part}"
 # = the daily lastMod lookback (§V.35): small enough to stay fast + bounded,
 # large enough to self-heal multi-day outages.
 window_days="${WINDOW_DAYS:-120}"
-daily_window_days="${DAILY_WINDOW_DAYS:-30}"
+daily_window_days="${DAILY_WINDOW_DAYS:-7}"
 pages_url="${PAGES_URL:-https://pr0d1r2.github.io/nix-vulnix-nvd-mirror}"
 is_bootstrap=0
 

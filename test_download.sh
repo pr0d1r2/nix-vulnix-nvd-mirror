@@ -664,10 +664,10 @@ test_daily_window_is_small() {
     ed=$(date -u -d "${e%%T*}" +%s 2>/dev/null || date -u -j -f "%Y-%m-%d" "${e%%T*}" +%s)
     days=$(( (ed - sd) / 86400 ))
 
-    if [ "$days" -ge 28 ] && [ "$days" -le 31 ]; then
-        pass "daily window: lastMod lookback is ~30 days ($days), not the 120 max"
+    if [ "$days" -ge 6 ] && [ "$days" -le 8 ]; then
+        pass "daily window: lastMod lookback is ~7 days ($days), not the 120 max"
     else
-        fail "daily window: expected ~30 days, got $days"
+        fail "daily window: expected ~7 days, got $days"
     fi
 }
 
