@@ -48,6 +48,17 @@ fi
 echo ">> building feeds into public/ ..."
 ( cd "$here" && bash download.sh )
 
+# Size guard: GitHub rejects any file >100MB on git push (gh-pages). Fail fast
+# with a clear message instead of a doomed push. (Oversized modified feed ->
+# `./republish.sh` regenerates it small while keeping the year buckets.)
+big="$(find public -name '*.json.gz' -size +95M)"
+if [ -n "$big" ]; then
+    echo "error: feed(s) over 95MB exceed GitHub's 100MB git limit:" >&2
+    echo "$big" >&2
+    echo "shrink the window (DAILY_WINDOW_DAYS) or run ./republish.sh" >&2
+    exit 1
+fi
+
 echo ">> publishing public/ -> gh-pages ..."
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
