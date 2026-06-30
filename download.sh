@@ -22,6 +22,10 @@ staging_dir="${STAGING_DIR:-${TMPDIR:-/tmp}/nvd-part}"
 # large enough to self-heal multi-day outages.
 window_days="${WINDOW_DAYS:-120}"
 daily_window_days="${DAILY_WINDOW_DAYS:-7}"
+# The published modified feed is a SMALL recent slice (decoupled from the wider
+# merge window) so it never approaches GitHub's 100MB/file git limit even when
+# NVD mass-modifies. The full window still merges into the year buckets.
+modified_days="${MODIFIED_DAYS:-2}"
 pages_url="${PAGES_URL:-https://pr0d1r2.github.io/nix-vulnix-nvd-mirror}"
 is_bootstrap=0
 
@@ -233,8 +237,14 @@ merge_window() {
     mkdir -p "$d"
     gzip -dc "$window_gz" | jq '.vulnerabilities // []' > "$d/win.json"
 
-    # modified feed == the window contents (§V.38).
-    jq '{resultsPerPage: length, startIndex: 0, totalResults: length, vulnerabilities: .}' \
+    # modified feed = the recent slice of the window (last modified_days), NOT
+    # the whole merge window (§V.38) — keeps it small while the full window is
+    # still upserted into the year buckets below.
+    local mod_cutoff
+    mod_cutoff="$(day_start "$modified_days")"
+    jq --arg c "$mod_cutoff" \
+        '[ .[] | select(.cve.lastModified >= $c) ]
+         | {resultsPerPage: length, startIndex: 0, totalResults: length, vulnerabilities: .}' \
         "$d/win.json" | gzip -n > "$outdir/nvdcve-2.0-modified.json.gz"
 
     for year in $(seq "$start_year" "$current_year"); do

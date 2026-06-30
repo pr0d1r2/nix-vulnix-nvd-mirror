@@ -104,11 +104,14 @@ ok_body() {
         n=$remaining
     fi
     # Stream the page body straight to the file (no large shell variable, so the
-    # mock itself is argv-safe at scale).
+    # mock itself is argv-safe at scale). lastModified = now, so these CVEs fall
+    # within the modified-feed recent slice (§V.38).
+    local now_iso
+    now_iso="$(date -u +%Y-%m-%dT%H:%M:%S.000)"
     {
         printf '{"totalResults": %s, "resultsPerPage": %s, "startIndex": %s, "vulnerabilities": [' \
             "$total" "$per_page" "$start_index"
-        awk -v s="$start_index" -v n="$n" 'BEGIN{for(i=0;i<n;i++){printf "%s{\"cve\":{\"id\":\"CVE-2024-%05d\",\"lastModified\":\"2024-01-01T00:00:00\"}}",(i?",":""),s+i}}'
+        awk -v s="$start_index" -v n="$n" -v lm="$now_iso" 'BEGIN{for(i=0;i<n;i++){printf "%s{\"cve\":{\"id\":\"CVE-2024-%05d\",\"lastModified\":\"%s\"}}",(i?",":""),s+i,lm}}'
         printf ']}'
     } > "$dest"
 }
@@ -131,6 +134,11 @@ case "$mode" in
     upsert)
         # window re-reports CVE-2024-00000 with a NEWER lastModified + a new CVE
         printf '{"totalResults":2,"resultsPerPage":2,"startIndex":0,"vulnerabilities":[{"cve":{"id":"CVE-2024-00000","lastModified":"2024-06-01T00:00:00"}},{"cve":{"id":"CVE-2024-00001","lastModified":"2024-06-01T00:00:00"}}]}' > "$dest"
+        printf '200'; exit 0 ;;
+    mixed)
+        # one OLD CVE (outside the modified slice) + one modified-now: the bucket
+        # gets both; the modified feed should carry only the recent one.
+        printf '{"totalResults":2,"resultsPerPage":2,"startIndex":0,"vulnerabilities":[{"cve":{"id":"CVE-2024-00000","lastModified":"2020-01-01T00:00:00"}},{"cve":{"id":"CVE-2024-00001","lastModified":"%s"}}]}' "$(date -u +%Y-%m-%dT%H:%M:%S.000)" > "$dest"
         printf '200'; exit 0 ;;
     *)
         ok_body; printf '200'; exit 0 ;;
@@ -671,6 +679,25 @@ test_daily_window_is_small() {
     fi
 }
 
+# ── Test 24: modified feed is the recent slice, decoupled from merge (§V.38) ─
+
+test_modified_decoupled() {
+    local test_dir="$WORK_DIR/test_mod_decoupled"
+    mkdir -p "$test_dir"
+    # window: 1 old CVE (outside slice) + 1 modified-now.
+    MOCK_CURL_MODE=mixed run_download "$test_dir"
+
+    local bucket modified
+    bucket=$(gzip -dc "$test_dir/run/public/nvdcve-2.0-2024.json.gz" | jq '.vulnerabilities | length')
+    modified=$(gzip -dc "$test_dir/run/public/nvdcve-2.0-modified.json.gz" | jq '.totalResults')
+
+    if [ "$bucket" -eq 2 ] && [ "$modified" -eq 1 ]; then
+        pass "modified decoupled: bucket has both (2), modified only the recent (1)"
+    else
+        fail "modified decoupled: expected bucket=2 modified=1, got bucket=$bucket modified=$modified"
+    fi
+}
+
 # ── Run all tests ──────────────────────────────────────────────────────────
 
 echo "=== test_download.sh ==="
@@ -699,6 +726,7 @@ test_bootstrap_when_empty
 test_modified_is_window
 test_merge_scales_large_window
 test_daily_window_is_small
+test_modified_decoupled
 
 echo ""
 echo "Results: $passed passed, $failed failed"
