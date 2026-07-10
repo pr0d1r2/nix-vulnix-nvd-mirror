@@ -11,6 +11,36 @@ GitHub Pages mirror of NVD JSON feeds for use with
 vulnix --mirror https://pr0d1r2.github.io/nix-vulnix-nvd-mirror/ ./result
 ```
 
+## Publishing from a residential machine (fast, un-throttled)
+
+NVD heavily rate-limits datacenter / CI IPs, so the GitHub-hosted mirror job can
+be slow. To build + publish from your own machine instead:
+
+```bash
+just publish        # first run prompts for the NVD key + stores it; then builds + pushes
+```
+
+`just publish` (or `./publish.sh`) resolves the NVD key **env → macOS Keychain →
+first-run prompt**: the first time, it asks for your key and saves it to the
+Keychain; every run after, it reads it back (Touch-ID gated) — the key never
+lands in shell history, env, or argv. It then builds `public/` via `download.sh`
+and force-pushes it to `gh-pages` (orphan, same as the workflow).
+
+Get a free key at <https://nvd.nist.gov/developers/request-an-api-key>.
+`just store-key` rotates/replaces the stored key explicitly.
+
+## Development environment
+
+The repo ships a flake devShell with every tool (`just`, `shellcheck`, `bats`,
+`vulnix`, `cachix`, …) and a `.envrc` for auto-loading via
+[direnv](https://direnv.net) + [nix-direnv](https://github.com/nix-community/nix-direnv):
+
+```bash
+direnv allow      # once — trust .envrc; tools load automatically on cd
+# or, without direnv:
+nix develop       # enter the devShell manually
+```
+
 ## How it works
 
 Daily GitHub Actions workflow downloads NVD 2.0 JSON feeds and deploys

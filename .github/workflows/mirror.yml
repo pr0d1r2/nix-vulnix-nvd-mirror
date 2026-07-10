@@ -41,6 +41,15 @@ jobs:
               "$SLACK_WEBHOOK_URL" || true
           fi
 
+      - name: Guard feed sizes (GitHub git limit 100MB/file)
+        run: |
+          big="$(find public -name '*.json.gz' -size +95M)"
+          if [ -n "$big" ]; then
+            echo "::error::feed(s) over 95MB exceed GitHub's 100MB git push limit:"
+            echo "$big"
+            exit 1
+          fi
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
