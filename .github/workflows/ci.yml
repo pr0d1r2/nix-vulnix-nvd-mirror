@@ -1,48 +1,12 @@
-# SPEC §I ci.yml / §V.21–§V.23, §V.34. Build first, then `nix flake check --no-build`.
-name: ci
+---
+name: CI
 
-on:
+"on":
   push:
-    # The daily feeds.lock commit (§V.26) is data-only — don't spend a CI run on it.
-    paths-ignore:
-      - feeds.lock
+    branches: [main]
   pull_request:
-  workflow_call:
-
-permissions:
-  contents: read
+    branches: [main]
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31.10.6
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      # Pushes whatever the build step produces to pr0d1r2.cachix.org (§V.23);
-      # no-op when CACHIX_AUTH_TOKEN is absent (e.g. fork PRs), so checks still pass.
-      - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
-        with:
-          name: pr0d1r2
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-
-      # Build each NAMED check (no `.*` attr wildcard exists in nix). Building a
-      # check runs its test; these get pushed to Cachix by cachix-action above.
-      # NOTE: devShell (§V.21) is added here once T17 lands; it does not exist yet.
-      - name: Build checks
-        run: |
-          nix build -L \
-            .#checks.x86_64-linux.shellcheck \
-            .#checks.x86_64-linux.download \
-            .#checks.x86_64-linux.checksum \
-            .#checks.x86_64-linux.flake \
-            .#checks.x86_64-linux.health-check
-
-      # Validate the whole flake evaluates and the checks pass; builds nothing
-      # (already built above), and never builds packages.nvd-cache (§V.22).
-      - name: Flake check (no build)
-        run: nix flake check --no-build
+  guardrails:
+    uses: pr0d1r2/set-and-setting/.github/workflows/guardrails.yml@main
