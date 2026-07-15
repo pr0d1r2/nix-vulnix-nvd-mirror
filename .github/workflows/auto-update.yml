@@ -1,0 +1,22 @@
+---
+name: Update set-and-setting
+
+# Auto-update workflow for consumer repos (T8/C7). Runs daily and on
+# manual dispatch. Updates the set-and-setting flake input and opens
+# a PR with the flake.lock change. After merge, devShell entry
+# (direnv reload) triggers sync-set + sync-setting automatically.
+
+"on":
+  schedule:
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    uses: pr0d1r2/set-and-setting/.github/workflows/auto-update.yml@main
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
