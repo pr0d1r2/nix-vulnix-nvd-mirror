@@ -68,11 +68,12 @@
               sleep 0.2
             done
 
-            # Scan a tiny real package to drive feed retrieval into the cache-dir
-            # (§V.47). vulnix exits non-zero when it FINDS vulns — that must not
-            # fail asset generation (§V.45), so ignore its exit and gate on the
-            # artifact instead.
-            vulnix -m "http://127.0.0.1:$port/" -c $TMPDIR/cache ${pkgs.hello} || true
+            # An empty package manifest reaches NVD.update() without asking
+            # nix-store for deriver metadata. The latter is unavailable in a
+            # pure build sandbox's private store database (§V.47).
+            printf '{}\n' > $TMPDIR/packages.json
+            vulnix -m "http://127.0.0.1:$port/" -c $TMPDIR/cache \
+              --from-file $TMPDIR/packages.json || true
 
             # §V.40/§V.45 — the real success criterion: a non-empty database.
             test -s $TMPDIR/cache/Data.fs

@@ -137,6 +137,15 @@ else
     fail "flake.nix does not set packages.default"
 fi
 
+# ── Test 13: cache population avoids sandboxed nix-store metadata ────────────
+
+if grep -q -- '--from-file' "$SCRIPT_DIR/flake.nix" \
+    && grep -q "packages.json" "$SCRIPT_DIR/flake.nix"; then
+    pass "nvd-cache uses an empty package manifest to trigger feed compilation"
+else
+    fail "nvd-cache must not require nix-store deriver metadata in its sandbox"
+fi
+
 echo ""
 echo "Results: $passed passed, $failed failed"
 [ "$failed" -eq 0 ]
