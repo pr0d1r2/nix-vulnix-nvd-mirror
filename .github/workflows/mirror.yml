@@ -14,11 +14,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  check:
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
   mirror:
+    needs: check
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31.10.6
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
+        with:
+          name: pr0d1r2
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Lint shell scripts
         run: shellcheck download.sh health_check.sh
@@ -61,3 +80,46 @@ jobs:
         run: bash health_check.sh
         env:
           PAGES_URL: https://pr0d1r2.github.io/nix-vulnix-nvd-mirror
+
+      # Pull before editing the lock so a concurrent main update can rebase
+      # cleanly. The workflow's concurrency group serializes mirror runs.
+      - name: Update feed lock
+        run: |
+          git pull --rebase origin main
+          tmp="$(mktemp)"
+          jq -n '{}' > "$tmp"
+          for feed in public/nvdcve-2.0-*.json.gz; do
+            key="${feed##*/nvdcve-2.0-}"
+            key="${key%.json.gz}"
+            hash="$(nix hash file --sri --type sha256 "$feed")"
+            jq --arg key "$key" --arg hash "$hash" \
+              '. + {($key): $hash}' "$tmp" > "${tmp}.next"
+            mv "${tmp}.next" "$tmp"
+          done
+          mv "$tmp" feeds.lock
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add feeds.lock
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore: update feed lock [skip ci]'
+            git push origin HEAD:main
+          fi
+
+      # fetchurl uses flat SHA-256 paths. Adding the freshly downloaded bytes
+      # with the legacy flat-store command creates those exact paths, avoiding
+      # any dependency on GitHub Pages CDN propagation during this build.
+      - name: Pre-seed feed store paths
+        run: |
+          for feed in public/nvdcve-2.0-*.json.gz; do
+            nix-store --add-fixed sha256 "$feed"
+          done
+
+      - name: Build pre-built vulnix cache
+        run: nix build -L .#nvd-cache
+
+      - name: Publish pre-built vulnix cache
+        if: env.CACHIX_AUTH_TOKEN != ''
+        run: |
+          cache_path="$(readlink -f result)"
+          cachix push pr0d1r2 "$cache_path"
+          cachix pin pr0d1r2 nvd-cache "$cache_path" --keep-days 7

@@ -122,6 +122,8 @@
             "bash test_flake.sh";
           health-check = mkCheck "health-check" [ pkgs.bash pkgs.gzip pkgs.gnugrep pkgs.coreutils ]
             "bash test_health_check.sh";
+          workflow = mkCheck "workflow" [ pkgs.bash pkgs.gnugrep ]
+            "bash test_workflow.sh";
         };
 
         # §V.19 — devShell carrying every CI/local tool (incl. just), auto-loaded
