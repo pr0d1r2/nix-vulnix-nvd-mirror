@@ -6,6 +6,16 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
+  # Let consumers opt into substituting the daily pre-built database instead
+  # of compiling it locally. Nix still requires --accept-flake-config (or an
+  # equivalent trusted system configuration) before using these settings.
+  nixConfig = {
+    extra-substituters = [ "https://pr0d1r2.cachix.org" ];
+    extra-trusted-public-keys = [
+      "pr0d1r2.cachix.org-1:NfWjbhgAj41byXhCKiaE+av3Vnphm1fTezHXEGsiQIM="
+    ];
+  };
+
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
