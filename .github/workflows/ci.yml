@@ -41,7 +41,8 @@ jobs:
             .#checks.x86_64-linux.checksum \
             .#checks.x86_64-linux.flake \
             .#checks.x86_64-linux.health-check \
-            .#checks.x86_64-linux.workflow
+            .#checks.x86_64-linux.workflow \
+            .#checks.x86_64-linux.module
 
       # Validate the whole flake evaluates and the checks pass; builds nothing
       # (already built above), and never builds packages.nvd-cache (§V.22).

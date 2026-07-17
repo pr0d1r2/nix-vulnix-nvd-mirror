@@ -95,6 +95,14 @@
             platforms = platforms.all;
           };
         };
+
+        moduleTest = nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [
+            self.nixosModules.default
+            { programs.vulnix-cache.enable = true; }
+          ];
+        };
         # §V.21/§V.34 — each check is a sandboxed derivation carrying its own
         # tool closure; building a check runs its test. (The test_*.sh are plain
         # bash, run with `bash`, not bats.)
@@ -124,6 +132,16 @@
             "bash test_health_check.sh";
           workflow = mkCheck "workflow" [ pkgs.bash pkgs.gnugrep ]
             "bash test_workflow.sh";
+          module = pkgs.runCommand "check-nixos-module" {
+            # Discard the nvd-cache path's string context: this check validates
+            # module evaluation/wiring without building the large cache in CI.
+            seedScript = builtins.unsafeDiscardStringContext
+              moduleTest.config.systemd.services.vulnix-cache-seed.script;
+          } ''
+            [[ "$seedScript" == *Data.fs* ]]
+            [[ "$seedScript" == *'/var/cache/vulnix'* ]]
+            touch $out
+          '';
         };
 
         # §V.19 — devShell carrying every CI/local tool (incl. just), auto-loaded
@@ -136,5 +154,11 @@
           ];
         };
       }
-    );
+    ) // {
+      nixosModules.default = { lib, pkgs, ... }: {
+        imports = [ ./nixos-module.nix ];
+        programs.vulnix-cache.package = lib.mkDefault
+          self.packages.${pkgs.stdenv.hostPlatform.system}.nvd-cache;
+      };
+    };
 }

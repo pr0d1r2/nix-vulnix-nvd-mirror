@@ -43,6 +43,33 @@ On a live ISO, include the flake input in the image closure so the cache is
 already on the medium, then perform the same copy into the writable `/var`
 overlay before scanning.
 
+### Declarative NixOS seeding
+
+The flake exports `nixosModules.default`. A consumer can seed
+`/var/cache/vulnix` on every boot or configuration change:
+
+```nix
+{
+  inputs.nvd-mirror.url = "github:pr0d1r2/nix-vulnix-nvd-mirror";
+
+  outputs = { nixpkgs, nvd-mirror, ... }: {
+    nixosConfigurations.host = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        nvd-mirror.nixosModules.default
+        { programs.vulnix-cache.enable = true; }
+      ];
+    };
+  };
+}
+```
+
+This keeps the pre-built package in the system or ISO closure and copies only
+`Data.fs` into the writable runtime cache. Run scans with
+`vulnix -c /var/cache/vulnix ...`. Set `programs.vulnix-cache.cacheDir` to use a
+different absolute directory, or override `programs.vulnix-cache.package` with
+another compatible cache derivation.
+
 ## Publishing from a residential machine (fast, un-throttled)
 
 NVD heavily rate-limits datacenter / CI IPs, so the GitHub-hosted mirror job can
