@@ -9,4 +9,24 @@ name: CI
 
 jobs:
   guardrails:
-    uses: pr0d1r2/set-and-setting/.github/workflows/guardrails.yml@main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v27
+      - name: Materialize and confirm configs
+        run: nix develop --command nix run .#confirm
+      - name: Nix flake check
+        run: nix flake check --print-build-logs --timeout 600
+
+  guardrails-darwin:
+    needs: guardrails
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: Materialize configs
+        run: |
+          setting_pkg="$(nix build .#setting --print-out-paths --no-link)"
+          "$setting_pkg/bin/sync-setting" .
+      - name: Nix flake check
+        run: nix flake check --print-build-logs --timeout 600
