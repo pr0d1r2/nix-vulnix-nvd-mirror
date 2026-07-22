@@ -25,11 +25,23 @@
       fragments = [
         "base"
         "nix"
-        "shell"
         "ascii"
         "markdown"
         "yaml"
       ];
       src = ./.;
+      # This project is a shell application whose public and test structure is
+      # intentionally function-based. Keep the applicable shell linters without
+      # opting into the functionless-script architecture policy.
+      extraChecks = pkgs: {
+        shellcheck = set-and-setting.lib.mkShellcheckCheck {
+          inherit pkgs;
+          src = ./.;
+        };
+        shfmt = set-and-setting.lib.mkShfmtCheck {
+          inherit pkgs;
+          src = ./.;
+        };
+      };
     };
 }

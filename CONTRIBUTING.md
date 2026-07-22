@@ -23,16 +23,16 @@ public/                      # Output directory (git-ignored)
 ## Development setup
 
 1. Clone the repository:
-   ```
-   git clone https://github.com/pr0d1r2/nix-vulnix-nvd-mirror.git
-   cd nix-vulnix-nvd-mirror
-   ```
+    ```
+    git clone https://github.com/pr0d1r2/nix-vulnix-nvd-mirror.git
+    cd nix-vulnix-nvd-mirror
+    ```
 
 2. Verify prerequisites:
-   ```
-   bash --version
-   shellcheck --version
-   ```
+    ```
+    bash --version
+    shellcheck --version
+    ```
 
 ## Running tests
 
