@@ -137,6 +137,25 @@ else
     fail "flake.nix does not set packages.default"
 fi
 
+# ── Test 13: cache population avoids sandboxed nix-store metadata ────────────
+
+if grep -q -- '--from-file' "$SCRIPT_DIR/flake.nix" \
+    && grep -q "packages.json" "$SCRIPT_DIR/flake.nix"; then
+    pass "nvd-cache uses an empty package manifest to trigger feed compilation"
+else
+    fail "nvd-cache must not require nix-store deriver metadata in its sandbox"
+fi
+
+# ── Test 14: consumers can opt into the published binary cache (§V.25) ───
+
+if grep -Fq 'extra-substituters = [ "https://pr0d1r2.cachix.org" ];' "$SCRIPT_DIR/flake.nix" \
+    && grep -Fq 'pr0d1r2.cachix.org-1:NfWjbhgAj41byXhCKiaE+av3Vnphm1fTezHXEGsiQIM=' \
+        "$SCRIPT_DIR/flake.nix"; then
+    pass "flake.nix advertises the public nvd-cache substituter and signing key"
+else
+    fail "flake.nix must advertise the public nvd-cache substituter and signing key"
+fi
+
 echo ""
 echo "Results: $passed passed, $failed failed"
 [ "$failed" -eq 0 ]

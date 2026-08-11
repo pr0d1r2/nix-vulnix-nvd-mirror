@@ -6,6 +6,16 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
+  # Let consumers opt into substituting the daily pre-built database instead
+  # of compiling it locally. Nix still requires --accept-flake-config (or an
+  # equivalent trusted system configuration) before using these settings.
+  nixConfig = {
+    extra-substituters = [ "https://pr0d1r2.cachix.org" ];
+    extra-trusted-public-keys = [
+      "pr0d1r2.cachix.org-1:NfWjbhgAj41byXhCKiaE+av3Vnphm1fTezHXEGsiQIM="
+    ];
+  };
+
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
@@ -68,11 +78,12 @@
               sleep 0.2
             done
 
-            # Scan a tiny real package to drive feed retrieval into the cache-dir
-            # (§V.47). vulnix exits non-zero when it FINDS vulns — that must not
-            # fail asset generation (§V.45), so ignore its exit and gate on the
-            # artifact instead.
-            vulnix -m "http://127.0.0.1:$port/" -c $TMPDIR/cache ${pkgs.hello} || true
+            # An empty package manifest reaches NVD.update() without asking
+            # nix-store for deriver metadata. The latter is unavailable in a
+            # pure build sandbox's private store database (§V.47).
+            printf '{}\n' > $TMPDIR/packages.json
+            vulnix -m "http://127.0.0.1:$port/" -c $TMPDIR/cache \
+              --from-file $TMPDIR/packages.json || true
 
             # §V.40/§V.45 — the real success criterion: a non-empty database.
             test -s $TMPDIR/cache/Data.fs
@@ -94,6 +105,14 @@
             license = licenses.free;
             platforms = platforms.all;
           };
+        };
+
+        moduleTest = nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [
+            self.nixosModules.default
+            { programs.vulnix-cache.enable = true; }
+          ];
         };
         # §V.21/§V.34 — each check is a sandboxed derivation carrying its own
         # tool closure; building a check runs its test. (The test_*.sh are plain
@@ -122,6 +141,18 @@
             "bash test_flake.sh";
           health-check = mkCheck "health-check" [ pkgs.bash pkgs.gzip pkgs.gnugrep pkgs.coreutils ]
             "bash test_health_check.sh";
+          workflow = mkCheck "workflow" [ pkgs.bash pkgs.gnugrep ]
+            "bash test_workflow.sh";
+          module = pkgs.runCommand "check-nixos-module" {
+            # Discard the nvd-cache path's string context: this check validates
+            # module evaluation/wiring without building the large cache in CI.
+            seedScript = builtins.unsafeDiscardStringContext
+              moduleTest.config.systemd.services.vulnix-cache-seed.script;
+          } ''
+            [[ "$seedScript" == *Data.fs* ]]
+            [[ "$seedScript" == *'/var/cache/vulnix'* ]]
+            touch $out
+          '';
         };
 
         # §V.19 — devShell carrying every CI/local tool (incl. just), auto-loaded
@@ -134,5 +165,11 @@
           ];
         };
       }
-    );
+    ) // {
+      nixosModules.default = { lib, pkgs, ... }: {
+        imports = [ ./nixos-module.nix ];
+        programs.vulnix-cache.package = lib.mkDefault
+          self.packages.${pkgs.stdenv.hostPlatform.system}.nvd-cache;
+      };
+    };
 }

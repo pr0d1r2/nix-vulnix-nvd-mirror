@@ -7,9 +7,68 @@ GitHub Pages mirror of NVD JSON feeds for use with
 
 ## Usage
 
+For an ad-hoc scan that can tolerate downloading feeds, use the Pages mirror:
+
 ```
 vulnix --mirror https://pr0d1r2.github.io/nix-vulnix-nvd-mirror/ ./result
 ```
+
+For cold CI runners, ephemeral builders, and live-ISO smoke tests, use the
+pre-built cache instead. Configure the public binary cache once:
+
+```nix
+# /etc/nix/nix.conf or the equivalent NixOS settings
+extra-substituters = https://pr0d1r2.cachix.org
+extra-trusted-public-keys = pr0d1r2.cachix.org-1:NfWjbhgAj41byXhCKiaE+av3Vnphm1fTezHXEGsiQIM=
+```
+
+Then substitute the current database and seed a writable cache directory:
+
+```bash
+cache="$(nix build --no-link --print-out-paths \
+  github:pr0d1r2/nix-vulnix-nvd-mirror#nvd-cache)"
+sudo install -d -m0755 /var/cache/vulnix
+sudo install -m0644 "$cache/Data.fs" /var/cache/vulnix/Data.fs
+vulnix -c /var/cache/vulnix -R /run/current-system
+```
+
+`Data.fs` in the Nix store is read-only, while vulnix opens its database
+read-write and creates lock/index files. Do not pass the store path itself to
+`-c`; always copy `Data.fs` to a writable directory first. For an unprivileged
+CI job, replace `/var/cache/vulnix` with a job-local directory such as
+`"$RUNNER_TEMP/vulnix"`. The scan remains fatal on findings; only feed download
+and compilation have moved out of scan time.
+
+On a live ISO, include the flake input in the image closure so the cache is
+already on the medium, then perform the same copy into the writable `/var`
+overlay before scanning.
+
+### Declarative NixOS seeding
+
+The flake exports `nixosModules.default`. A consumer can seed
+`/var/cache/vulnix` on every boot or configuration change:
+
+```nix
+{
+  inputs.nvd-mirror.url = "github:pr0d1r2/nix-vulnix-nvd-mirror";
+
+  outputs = { nixpkgs, nvd-mirror, ... }: {
+    nixosConfigurations.host = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        nvd-mirror.nixosModules.default
+        { programs.vulnix-cache.enable = true; }
+      ];
+    };
+  };
+}
+```
+
+This keeps the pre-built package in the system or ISO closure and copies only
+`Data.fs` into the writable runtime cache. Run scans with
+`vulnix -c /var/cache/vulnix ...`. Set `programs.vulnix-cache.cacheDir` to use a
+different absolute directory, or override `programs.vulnix-cache.package` with
+another compatible cache derivation.
 
 ## Publishing from a residential machine (fast, un-throttled)
 
