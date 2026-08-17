@@ -67,12 +67,12 @@
         devShells.default = pkgs.mkShell {
           packages = [ pkgs.bash pkgs.jq pkgs.shellcheck pkgs.shfmt pkgs.typos ];
           shellHook = ''
-            ${set-and-setting.lib.mkSet}/bin/sync-set || true
-            ${set-and-setting.lib.mkSetting}/bin/sync-setting || true
+            ${(set-and-setting.lib.mkSet { inherit pkgs; })}/bin/sync-set || true
+            ${(set-and-setting.lib.mkSetting { inherit pkgs; })}/bin/sync-setting || true
           '';
         };
         checks = {
-          shellcheck = pkgs.runCommand "shellcheck-check" { nativeBuildInputs = [ pkgs.shellcheck ]; } ''shellcheck ${./download.sh} ${./health_check.sh} ${./publish.sh} ${./republish.sh} ${./test_*.sh}; touch $out'';
+          shellcheck = pkgs.runCommand "shellcheck-check" { nativeBuildInputs = [ pkgs.shellcheck ]; } ''shellcheck ${./download.sh} ${./health_check.sh} ${./publish.sh} ${./republish.sh} ${./test_checksum.sh} ${./test_download.sh} ${./test_flake.sh} ${./test_health_check.sh} ${./test_workflow.sh}; touch $out'';
           download = pkgs.runCommand "download-check" { } ''bash ${./test_download.sh}; touch $out'';
           checksum = pkgs.runCommand "checksum-check" { } ''bash ${./test_checksum.sh}; touch $out'';
           flake = pkgs.runCommand "flake-check" { } ''bash ${./test_flake.sh}; touch $out'';
