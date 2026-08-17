@@ -99,11 +99,30 @@
           '';
         };
         checks = {
-          shellcheck = pkgs.runCommand "shellcheck-check" { nativeBuildInputs = [ pkgs.shellcheck ]; } ''shellcheck ${./download.sh} ${./health_check.sh} ${./publish.sh} ${./republish.sh} ${./test_checksum.sh} ${./test_download.sh} ${./test_flake.sh} ${./test_health_check.sh} ${./test_workflow.sh}; touch $out'';
-          download = pkgs.runCommand "download-check" { } ''bash ${./test_download.sh}; touch $out'';
-          checksum = pkgs.runCommand "checksum-check" { } ''bash ${./test_checksum.sh}; touch $out'';
-          flake = pkgs.runCommand "flake-check" { } ''bash ${./test_flake.sh}; touch $out'';
-          health-check = pkgs.runCommand "health-check" { } ''bash ${./test_health_check.sh}; touch $out'';
+          # The test scripts resolve sibling files through SCRIPT_DIR.  Pass
+          # the complete source tree explicitly: interpolating an individual
+          # script path would copy only that file into the sandbox, making
+          # repository-aware checks see a fictitious empty repository.
+          shellcheck = pkgs.runCommand "shellcheck-check" {
+            nativeBuildInputs = [ pkgs.shellcheck ];
+            src = ./.;
+          } ''shellcheck $src/download.sh $src/health_check.sh $src/publish.sh $src/republish.sh $src/test_checksum.sh $src/test_download.sh $src/test_flake.sh $src/test_health_check.sh $src/test_workflow.sh; touch $out'';
+          download = pkgs.runCommand "download-check" {
+            nativeBuildInputs = [ pkgs.jq pkgs.gzip pkgs.curl ];
+            src = ./.;
+          } ''bash $src/test_download.sh; touch $out'';
+          checksum = pkgs.runCommand "checksum-check" {
+            nativeBuildInputs = [ pkgs.jq pkgs.gzip ];
+            src = ./.;
+          } ''bash $src/test_checksum.sh; touch $out'';
+          flake = pkgs.runCommand "flake-check" {
+            nativeBuildInputs = [ pkgs.jq ];
+            src = ./.;
+          } ''bash $src/test_flake.sh; touch $out'';
+          health-check = pkgs.runCommand "health-check" {
+            nativeBuildInputs = [ pkgs.jq pkgs.gzip pkgs.curl ];
+            src = ./.;
+          } ''bash $src/test_health_check.sh; touch $out'';
         };
       });
 }
