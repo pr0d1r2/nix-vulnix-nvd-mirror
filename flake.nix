@@ -61,6 +61,11 @@
           '';
           installPhase = "mkdir -p $out; cp $TMPDIR/cache/Data.fs $out/";
         };
+      in let
+        materialization = set-and-setting.lib.materializationFor {
+          inherit pkgs;
+          fragments = [ "base" "actions" "nix" "shell" "ascii" "markdown" "yaml" ];
+        };
       in {
         packages.nvd-cache = nvdCache;
         packages.default = nvdCache;
@@ -75,13 +80,20 @@
           materialization = set-and-setting.lib.materializationFor {
             inherit pkgs;
             fileClassOverrides = { };
-            fragments = [ "base" "shell" ];
+            fragments = [ "base" "actions" "nix" "shell" "ascii" "markdown" "yaml" ];
           };
           confirmRev = set-and-setting.rev or set-and-setting.dirtyRev or "unknown";
         };
-        devShells.default = pkgs.mkShell {
-          packages = [ pkgs.bash pkgs.jq pkgs.shellcheck pkgs.shfmt pkgs.typos ];
-          shellHook = ''
+        devShells = set-and-setting.lib.mkDevShells {
+          inherit pkgs;
+          basePackages = materialization.packages ++ [
+            pkgs.bash
+            pkgs.jq
+            pkgs.shellcheck
+            pkgs.shfmt
+            pkgs.typos
+          ];
+          settingHook = ''
             ${(set-and-setting.lib.mkSet { inherit pkgs; })}/bin/sync-set || true
             ${(set-and-setting.lib.mkSetting { inherit pkgs; })}/bin/sync-setting || true
           '';
