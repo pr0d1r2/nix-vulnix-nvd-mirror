@@ -390,3 +390,4 @@ RTK filter configuration (schema version 1, currently empty filters).
 15. **2026-08-17 — `guardrails / check` failed the file-size check for the repository's intentionally large specification and shell test files.** Fixed by defining explicit limits for Markdown and shell files in the required policy.
 16. **2026-08-17 — `guardrails / check` flagged the established fixed-output-derivation acronym `FOD` as a typo.** Fixed by documenting the domain abbreviation in the repository typos configuration.
 17. **2026-08-17 — `guardrails / check` flagged dummy API-key text in a test fixture as a secret.** Fixed by marking the two non-secret fixture occurrences for the scanner.
+18. **2026-08-17 — `guardrails / check` failed because the flake exposed only the guardrail consumer and no `nvd-cache` package.** Fixed by restoring the feeds.lock-backed fixed-output feeds, loopback vulnix build, default package, and named verification checks required by the flake tests.
