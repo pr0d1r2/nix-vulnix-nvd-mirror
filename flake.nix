@@ -64,6 +64,21 @@
       in {
         packages.nvd-cache = nvdCache;
         packages.default = nvdCache;
+        # The shared guardrails workflow runs this consumer-facing acceptance
+        # app after materializing the standard settings. Keep it at the flake
+        # boundary so the repo satisfies the set-and-setting contract while
+        # retaining the project's own package and check outputs.
+        apps.confirm = set-and-setting.lib.mkConfirmApp {
+          inherit pkgs;
+          standard = set-and-setting;
+          setting = set-and-setting.lib.mkSetting { inherit pkgs; };
+          materialization = set-and-setting.lib.materializationFor {
+            inherit pkgs;
+            fileClassOverrides = { };
+            fragments = [ "base" "shell" ];
+          };
+          confirmRev = set-and-setting.rev or set-and-setting.dirtyRev or "unknown";
+        };
         devShells.default = pkgs.mkShell {
           packages = [ pkgs.bash pkgs.jq pkgs.shellcheck pkgs.shfmt pkgs.typos ];
           shellHook = ''
