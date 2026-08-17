@@ -1,0 +1,49 @@
+---
+
+pre-commit:
+  commands:
+    gitleaks:
+      run: lefthook-gitleaks {staged_files}
+    git-conflict-markers:
+      run: lefthook-git-conflict-markers {staged_files}
+    git-no-local-paths:
+      run: lefthook-git-no-local-paths {staged_files}
+    nix-flake-check:
+      glob: "*.nix"
+      run: timeout ${LEFTHOOK_NIX_FLAKE_CHECK_TIMEOUT:-60} nix flake check
+    actionlint:
+      glob: ".github/workflows/*.{yml,yaml}"
+      run: timeout ${LEFTHOOK_ACTIONLINT_TIMEOUT:-30} lefthook-actionlint {staged_files}
+    unicode-lint:
+      glob: "*"
+      exclude: '\.(gif|png|jpg|jpeg|ico|webp|bmp|tiff|pdf|woff2?|ttf|eot|mp[34]|wav|ogg|zip|gz|tar|iso)$'
+      run: timeout ${LEFTHOOK_UNICODE_LINT_TIMEOUT:-30} lefthook-unicode-lint {staged_files}
+    markdownlint:
+      glob: "*.md"
+      run: timeout ${LEFTHOOK_MARKDOWNLINT_TIMEOUT:-30} lefthook-markdownlint {staged_files}
+    markdownlint-agentic:
+      glob: "*.md"
+      run: timeout ${LEFTHOOK_MARKDOWNLINT_AGENTIC_TIMEOUT:-30} lefthook-markdownlint-agentic {staged_files}
+    yamllint:
+      glob: "*.{yml,yaml}"
+      run: timeout ${LEFTHOOK_YAMLLINT_TIMEOUT:-30} lefthook-yamllint {staged_files}
+
+pre-push:
+  commands:
+    linter-coverage:
+      run: timeout ${LEFTHOOK_LINTER_COVERAGE_FULL_TIMEOUT:-30} lefthook-linter-coverage-full
+    nix-flake-check:
+      glob: "*.nix"
+      run: timeout ${LEFTHOOK_NIX_FLAKE_CHECK_TIMEOUT:-60} nix flake check
+    actionlint:
+      glob: ".github/workflows/*.{yml,yaml}"
+      run: timeout ${LEFTHOOK_ACTIONLINT_TIMEOUT:-30} lefthook-actionlint {push_files}
+    markdownlint:
+      glob: "*.md"
+      run: timeout ${LEFTHOOK_MARKDOWNLINT_TIMEOUT:-30} lefthook-markdownlint {push_files}
+    markdownlint-agentic:
+      glob: "*.md"
+      run: timeout ${LEFTHOOK_MARKDOWNLINT_AGENTIC_TIMEOUT:-30} lefthook-markdownlint-agentic {push_files}
+    yamllint:
+      glob: "*.{yml,yaml}"
+      run: timeout ${LEFTHOOK_YAMLLINT_TIMEOUT:-30} lefthook-yamllint {push_files}
