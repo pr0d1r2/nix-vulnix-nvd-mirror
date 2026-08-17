@@ -4,6 +4,8 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    set-and-setting.url = "github:pr0d1r2/set-and-setting";
+    set-and-setting.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   # Let consumers opt into substituting the daily pre-built database instead
@@ -16,7 +18,7 @@
     ];
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, set-and-setting }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -158,11 +160,24 @@
         # §V.19 — devShell carrying every CI/local tool (incl. just), auto-loaded
         # via .envrc (§V.51). set-and-setting wiring (§V.20) is the rest of T17.
         devShells.default = pkgs.mkShell {
-          packages = [
+          buildInputs = [
             pkgs.just pkgs.bash pkgs.shellcheck pkgs.bats
             pkgs.curl pkgs.jq pkgs.gzip pkgs.coreutils pkgs.gnugrep pkgs.findutils
             pkgs.nix pkgs.vulnix pkgs.cachix
+            (set-and-setting.lib.mkSet {
+              inherit pkgs;
+              categories = [ "generic" "git" "nix" "security" ];
+            })
+            (set-and-setting.lib.mkSetting {
+              inherit pkgs;
+            })
           ];
+          shellHook = ''
+            if [ -z "''${CI:-}" ]; then
+              sync-set
+              sync-setting
+            fi
+          '';
         };
       }
     ) // {

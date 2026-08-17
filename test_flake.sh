@@ -100,6 +100,18 @@ else
     fail "flake.nix missing required inputs"
 fi
 
+# ── Test 8b: devShell carries the standards toolchain (SPEC §V.20) ──────────
+
+if grep -q 'set-and-setting.url' "$SCRIPT_DIR/flake.nix" \
+    && grep -q 'lib.mkSet' "$SCRIPT_DIR/flake.nix" \
+    && grep -q 'lib.mkSetting' "$SCRIPT_DIR/flake.nix" \
+    && grep -q 'sync-set' "$SCRIPT_DIR/flake.nix" \
+    && grep -q 'sync-setting' "$SCRIPT_DIR/flake.nix"; then
+    pass "devShell wires set-and-setting and syncs standards"
+else
+    fail "devShell must wire set-and-setting and sync standards"
+fi
+
 # ── Test 9: flake.nix is valid Nix syntax ────────────────────────────────────
 
 if command -v nix &>/dev/null; then

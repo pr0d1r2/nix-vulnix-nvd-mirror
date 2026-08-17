@@ -32,10 +32,10 @@ jobs:
 
       # Build each NAMED check (no `.*` attr wildcard exists in nix). Building a
       # check runs its test; these get pushed to Cachix by cachix-action above.
-      # NOTE: devShell (§V.21) is added here once T17 lands; it does not exist yet.
       - name: Build checks
         run: |
           nix build -L \
+            .#devShells.x86_64-linux.default \
             .#checks.x86_64-linux.shellcheck \
             .#checks.x86_64-linux.download \
             .#checks.x86_64-linux.checksum \
