@@ -25,7 +25,6 @@
       inherit self nixpkgs set-and-setting;
       fragments = [
         "base"
-        "actions"
         "nix"
         "shell"
         "ascii"
@@ -33,5 +32,25 @@
         "yaml"
       ];
       src = ./.;
+      extraChecks = pkgs:
+        let
+          workflowSources = nixpkgs.lib.sources.sourceByRegex
+            (nixpkgs.lib.sources.sourceFilesBySuffices ./. [ ".yml" ".yaml" ])
+            [ "^\\.github/workflows/.*" ];
+        in
+        {
+          # Pass the list required by the current Nixpkgs sourceByRegex API.
+          actionlint = set-and-setting.lib.mkLefthookCheck {
+            inherit pkgs;
+            src = workflowSources;
+            name = "actionlint";
+            wrapper = pkgs.writeShellApplication {
+              name = "actionlint-wrapper";
+              runtimeInputs = [ pkgs.actionlint ];
+              text = ''exec actionlint "$@"'';
+            };
+            suffices = null;
+          };
+        };
     };
 }
