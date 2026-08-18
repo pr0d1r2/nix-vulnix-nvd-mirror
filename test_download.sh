@@ -72,6 +72,13 @@ if [[ "$url" == *mock.pages* || "$url" == *github.io* ]]; then
     if [[ "${MOCK_PAGES_EMPTY:-0}" == "1" ]]; then
         exit 22   # simulate 404 -> no prior state -> bootstrap
     fi
+    if [[ "${MOCK_PAGES_PARTIAL:-0}" == "1" ]]; then
+        marker="${MOCK_CURL_STATE_DIR}/partial_seed_seen"
+        if [[ -e "$marker" ]]; then
+            exit 22   # simulate a partially published mirror
+        fi
+        : > "$marker"
+    fi
     if [[ "${MOCK_SEED_CVE:-0}" == "1" && "$url" == *2024* ]]; then
         # existing bucket already holds CVE-2024-00000 with an OLD lastModified
         echo '{"resultsPerPage":1,"startIndex":0,"totalResults":1,"vulnerabilities":[{"cve":{"id":"CVE-2024-00000","lastModified":"2020-01-01T00:00:00"}}]}' | gzip > "$dest"
@@ -183,6 +190,7 @@ run_download() {
     export NVD_RATE_DELAY=0
     export NOTIFICATION_WEBHOOK_URL="${NOTIFICATION_WEBHOOK_URL:-}"
     export MOCK_PAGES_EMPTY="${MOCK_PAGES_EMPTY:-0}"
+    export MOCK_PAGES_PARTIAL="${MOCK_PAGES_PARTIAL:-0}"
     export MOCK_SEED_CVE="${MOCK_SEED_CVE:-0}"
     export MOCK_CURL_TOTAL="${MOCK_CURL_TOTAL:-0}"
     export NVD_API_KEY="${NVD_API_KEY:-}"
@@ -243,6 +251,23 @@ test_no_extra_years() {
     pass "no extra years: exactly $expected_count feed files"
   else
     fail "no extra years: expected $expected_count, got $file_count"
+  fi
+}
+
+# A partial Pages publication must not be used as an incremental base: doing
+# so would turn missing historical buckets into empty feeds and lose data.
+test_partial_prior_state_bootstraps() {
+  local test_dir="$WORK_DIR/test_partial_prior_state"
+  mkdir -p "$test_dir"
+
+  # Serve only the first prior-year feed; the mock returns 404 for the others.
+  MOCK_PAGES_PARTIAL=1 MOCK_CURL_TOTAL=1 run_download "$test_dir"
+
+  local run_dir="$test_dir/run"
+  if grep -q 'pubStartDate=' "$test_dir/state/urls.log"; then
+    pass "partial prior state: bootstraps instead of discarding missing buckets"
+  else
+    fail "partial prior state: expected bootstrap pubStartDate requests"
   fi
 }
 
@@ -711,6 +736,7 @@ echo ""
 
 test_year_range
 test_no_extra_years
+test_partial_prior_state_bootstraps
 test_mirror_url_override
 test_retry_backoff
 test_retry_succeeds
