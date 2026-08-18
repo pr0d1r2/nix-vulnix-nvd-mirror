@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/mirror.yml"
+ci_workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/ci.yml"
 
 assert_contains() {
   local description="$1" pattern="$2"
@@ -13,6 +14,11 @@ assert_contains() {
 }
 
 assert_contains "mirror is gated by the reusable CI workflow" 'uses: \./\.github/workflows/ci\.yml'
+if ! grep -Eq -- 'workflow_call:' "$ci_workflow"; then
+  echo "FAIL: CI workflow is callable by mirror" >&2
+  exit 1
+fi
+echo "PASS: CI workflow is callable by mirror"
 assert_contains "mirror waits for checks" 'needs: check'
 assert_contains "checkout fetches full history for lock commits" 'fetch-depth: 0'
 assert_contains "feed hashes use Nix SRI format" 'nix hash file --sri --type sha256'
