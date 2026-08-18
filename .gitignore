@@ -2,3 +2,5 @@ public/
 result
 result-*
 .direnv/
+.markdownlint.yml
+.yamllint.yml

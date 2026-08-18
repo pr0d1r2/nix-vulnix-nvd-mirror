@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Test cases intentionally run commands in subshells with temporary
+# environment overrides; those assignments do not leak by design.
+# shellcheck disable=SC2030,SC2031
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

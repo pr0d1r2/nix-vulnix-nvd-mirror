@@ -1,0 +1,5 @@
+default: 8192
+extensions:
+  lock: 262144
+  md: 65536
+  sh: 32768

@@ -4,12 +4,12 @@ set -Eeuo pipefail
 workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/mirror.yml"
 
 assert_contains() {
-    local description="$1" pattern="$2"
-    if ! grep -Eq -- "$pattern" "$workflow"; then
-        echo "FAIL: $description" >&2
-        exit 1
-    fi
-    echo "PASS: $description"
+  local description="$1" pattern="$2"
+  if ! grep -Eq -- "$pattern" "$workflow"; then
+    echo "FAIL: $description" >&2
+    exit 1
+  fi
+  echo "PASS: $description"
 }
 
 assert_contains "mirror is gated by the reusable CI workflow" 'uses: \./\.github/workflows/ci\.yml'

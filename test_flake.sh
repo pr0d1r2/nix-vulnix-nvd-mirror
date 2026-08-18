@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# nix_flags intentionally expands into multiple CLI arguments.
+# shellcheck disable=SC2086
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

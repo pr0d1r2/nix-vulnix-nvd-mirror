@@ -1,16 +1,6 @@
 {
-  description = "Pre-built vulnix NVD cache from mirrored feeds";
+  description = "Reproducible NVD vulnerability mirror and vulnix cache";
 
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
-    set-and-setting.url = "github:pr0d1r2/set-and-setting";
-    set-and-setting.inputs.nixpkgs.follows = "nixpkgs";
-  };
-
-  # Let consumers opt into substituting the daily pre-built database instead
-  # of compiling it locally. Nix still requires --accept-flake-config (or an
-  # equivalent trusted system configuration) before using these settings.
   nixConfig = {
     extra-substituters = [ "https://pr0d1r2.cachix.org" ];
     extra-trusted-public-keys = [
@@ -18,173 +8,125 @@
     ];
   };
 
-  outputs = { self, nixpkgs, flake-utils, set-and-setting }:
+  inputs = {
+    # nixpkgs.url is supplied by the pinned nixpkgs-lock input below.
+    nixpkgs-lock.url = "github:pr0d1r2/nixpkgs-lock";
+    nixpkgs.follows = "nixpkgs-lock/nixpkgs";
+    flake-utils.url = "github:numtide/flake-utils";
+    set-and-setting.url = "github:pr0d1r2/set-and-setting";
+    set-and-setting.inputs.nixpkgs-lock.follows = "nixpkgs-lock";
+  };
+
+  outputs = { self, nixpkgs, flake-utils, set-and-setting, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
-
-        pagesUrl = "https://pr0d1r2.github.io/nix-vulnix-nvd-mirror";
-
-        # feeds.lock is committed (SPEC §V.26, §V.49). Guard a missing lock so the
-        # flake still evaluates (devShell/checks keep working); only nvd-cache
-        # needs a populated lock.
-        lock =
-          if builtins.pathExists ./feeds.lock
-          then builtins.fromJSON (builtins.readFile ./feeds.lock)
-          else { };
-
-        # §V.15b — feed list is the single source of truth: feeds.lock keys.
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [
+            (_final: prev: {
+              lib = prev.lib // {
+                sources = prev.lib.sources // {
+                  sourceByRegex = src: regex:
+                    prev.lib.sources.sourceByRegex src
+                      (if builtins.isList regex then regex else [ regex ]);
+                };
+              };
+            })
+          ];
+        };
+        lock = if builtins.pathExists ./feeds.lock
+          then builtins.fromJSON (builtins.readFile ./feeds.lock) else {};
         feeds = builtins.attrNames lock;
-
-        # §V.15 — each feed is a flat fixed-output derivation; its store path is
-        # f(name, sha256) only, independent of the URL, so mirror/CI/consumer all
-        # compute the same nvd-cache derivation hash and the Cachix substitute hits.
-        mkFeed = n:
-          let f = "nvdcve-2.0-${n}.json.gz";
-          in pkgs.fetchurl {
-            name = f;
-            url = "${pagesUrl}/${f}";
-            sha256 = lock.${n};
-          };
-
-        feedFarm = pkgs.linkFarm "nvd-feeds"
-          (map (n: { name = "nvdcve-2.0-${n}.json.gz"; path = mkFeed n; }) feeds);
-
-        nvd-cache = pkgs.stdenv.mkDerivation {
+        mkFeed = name: let file = "nvdcve-2.0-${name}.json.gz"; in
+          pkgs.fetchurl { name = file; url = "https://pr0d1r2.github.io/nix-vulnix-nvd-mirror/${file}"; sha256 = lock.${name}; };
+        feedFarm = pkgs.linkFarm "nvd-feeds" (map (name: {
+          name = "nvdcve-2.0-${name}.json.gz";
+          path = mkFeed name;
+        }) feeds);
+        nvdCache = pkgs.stdenv.mkDerivation {
           pname = "nvd-cache";
-          # §V.44 — version is content-addressed to feeds.lock, NOT the flake date,
-          # so two revs with identical feeds yield the same store path.
-          version =
-            builtins.substring 0 12
-              (builtins.hashString "sha256" (builtins.readFile ./feeds.lock));
-
+          version = builtins.substring 0 12 (builtins.hashString "sha256" (builtins.readFile ./feeds.lock));
           dontUnpack = true;
-
-          nativeBuildInputs = [ pkgs.vulnix pkgs.python3 pkgs.curl ];
-
+          nativeBuildInputs = [ pkgs.vulnix pkgs.curl pkgs.python3 ];
           buildPhase = ''
-            runHook preBuild
-
             export HOME=$TMPDIR
             mkdir -p $TMPDIR/cache
-
-            # vulnix is HTTP-only (no file:// adapter), so serve feeds on loopback
-            # (§V.46). serve-feeds.py synthesizes an empty feed for any absent
-            # in-range year so a 404 never aborts vulnix's update (§V.48).
-            port=$(( 20000 + $(echo "$NIX_BUILD_TOP" | cksum | cut -d' ' -f1) % 20000 ))
-            python3 ${./serve-feeds.py} ${feedFarm} "$port" &
-            server=$!
+            port=$((20000 + $(echo $NIX_BUILD_TOP | cksum | cut -d' ' -f1) % 20000))
+            ${pkgs.python3}/bin/python ${./serve-feeds.py} ${feedFarm} $port & server=$!
             trap "kill $server" EXIT
-
-            until curl -sf "http://127.0.0.1:$port/nvdcve-2.0-modified.json.gz" -o /dev/null; do
-              sleep 0.2
-            done
-
-            # An empty package manifest reaches NVD.update() without asking
-            # nix-store for deriver metadata. The latter is unavailable in a
-            # pure build sandbox's private store database (§V.47).
+            until ${pkgs.curl}/bin/curl -sf http://127.0.0.1:$port/nvdcve-2.0-modified.json.gz -o /dev/null; do sleep 0.2; done
             printf '{}\n' > $TMPDIR/packages.json
-            vulnix -m "http://127.0.0.1:$port/" -c $TMPDIR/cache \
-              --from-file $TMPDIR/packages.json || true
-
-            # §V.40/§V.45 — the real success criterion: a non-empty database.
+            vulnix -m http://127.0.0.1:$port/ -c $TMPDIR/cache --from-file $TMPDIR/packages.json || true
             test -s $TMPDIR/cache/Data.fs
-
-            runHook postBuild
           '';
-
-          installPhase = ''
-            runHook preInstall
-
-            mkdir -p $out
-            cp $TMPDIR/cache/Data.fs $out/
-
-            runHook postInstall
-          '';
-
-          meta = with pkgs.lib; {
-            description = "Pre-built vulnix NVD vulnerability database (Data.fs)";
-            license = licenses.free;
-            platforms = platforms.all;
+          installPhase = "mkdir -p $out; cp $TMPDIR/cache/Data.fs $out/";
+        };
+      in let
+        materialization = set-and-setting.lib.materializationFor {
+          inherit pkgs;
+          fragments = [ "base" "actions" "nix" "shell" "ascii" "markdown" "yaml" ];
+        };
+      in {
+        packages.nvd-cache = nvdCache;
+        packages.default = nvdCache;
+        # The shared guardrails workflow invokes the standard materialization
+        # output directly as `.#setting` on every target system. The value
+        # nested inside apps.confirm is not addressable as `.#setting`.
+        packages.setting = set-and-setting.lib.mkSetting { inherit pkgs; };
+        # The shared guardrails workflow runs this consumer-facing acceptance
+        # app after materializing the standard settings. Keep it at the flake
+        # boundary so the repo satisfies the set-and-setting contract while
+        # retaining the project's own package and check outputs.
+        apps.confirm = set-and-setting.lib.mkConfirmApp {
+          inherit pkgs;
+          standard = set-and-setting;
+          setting = set-and-setting.lib.mkSetting { inherit pkgs; };
+          materialization = set-and-setting.lib.materializationFor {
+            inherit pkgs;
+            fileClassOverrides = { };
+            fragments = [ "base" "actions" "nix" "shell" "ascii" "markdown" "yaml" ];
           };
+          confirmRev = set-and-setting.rev or set-and-setting.dirtyRev or "unknown";
         };
-
-        moduleTest = nixpkgs.lib.nixosSystem {
-          inherit system;
-          modules = [
-            self.nixosModules.default
-            { programs.vulnix-cache.enable = true; }
+        devShells = set-and-setting.lib.mkDevShells {
+          inherit pkgs;
+          basePackages = materialization.packages ++ [
+            pkgs.bash
+            pkgs.jq
+            pkgs.shellcheck
+            pkgs.shfmt
+            pkgs.typos
           ];
-        };
-        # §V.21/§V.34 — each check is a sandboxed derivation carrying its own
-        # tool closure; building a check runs its test. (The test_*.sh are plain
-        # bash, run with `bash`, not bats.)
-        mkCheck = name: inputs: cmd:
-          pkgs.runCommand "check-${name}" { nativeBuildInputs = inputs; } ''
-            cp -r ${self}/. work && chmod -R u+w work && cd work
-            ${cmd}
-            touch $out
+          settingHook = ''
+            ${(set-and-setting.lib.mkSet { inherit pkgs; })}/bin/sync-set || true
+            ${(set-and-setting.lib.mkSetting { inherit pkgs; })}/bin/sync-setting || true
           '';
-      in
-      {
-        packages.nvd-cache = nvd-cache;
-        packages.default = nvd-cache;
-
+        };
         checks = {
-          shellcheck = mkCheck "shellcheck" [ pkgs.shellcheck ]
-            "shellcheck download.sh health_check.sh";
-          # test_download.sh / test_checksum.sh execute download.sh against a
-          # mocked curl, so they need download.sh's full toolset.
-          download = mkCheck "download" [ pkgs.bash pkgs.jq pkgs.gzip pkgs.gnugrep pkgs.coreutils pkgs.findutils ]
-            "bash test_download.sh";
-          checksum = mkCheck "checksum" [ pkgs.bash pkgs.jq pkgs.gzip pkgs.gnugrep pkgs.coreutils pkgs.findutils ]
-            "bash test_checksum.sh";
-          flake = mkCheck "flake" [ pkgs.bash pkgs.jq pkgs.gnugrep ]
-            "bash test_flake.sh";
-          health-check = mkCheck "health-check" [ pkgs.bash pkgs.gzip pkgs.gnugrep pkgs.coreutils ]
-            "bash test_health_check.sh";
-          workflow = mkCheck "workflow" [ pkgs.bash pkgs.gnugrep ]
-            "bash test_workflow.sh";
-          module = pkgs.runCommand "check-nixos-module" {
-            # Discard the nvd-cache path's string context: this check validates
-            # module evaluation/wiring without building the large cache in CI.
-            seedScript = builtins.unsafeDiscardStringContext
-              moduleTest.config.systemd.services.vulnix-cache-seed.script;
-          } ''
-            [[ "$seedScript" == *Data.fs* ]]
-            [[ "$seedScript" == *'/var/cache/vulnix'* ]]
-            touch $out
-          '';
+          # The test scripts resolve sibling files through SCRIPT_DIR.  Pass
+          # the complete source tree explicitly: interpolating an individual
+          # script path would copy only that file into the sandbox, making
+          # repository-aware checks see a fictitious empty repository.
+          shellcheck = pkgs.runCommand "shellcheck-check" {
+            nativeBuildInputs = [ pkgs.shellcheck ];
+            src = ./.;
+          } ''shellcheck $src/download.sh $src/health_check.sh $src/publish.sh $src/republish.sh $src/test_checksum.sh $src/test_download.sh $src/test_flake.sh $src/test_health_check.sh $src/test_workflow.sh; touch $out'';
+          download = pkgs.runCommand "download-check" {
+            nativeBuildInputs = [ pkgs.jq pkgs.gzip pkgs.curl ];
+            src = ./.;
+          } ''bash $src/test_download.sh; touch $out'';
+          checksum = pkgs.runCommand "checksum-check" {
+            nativeBuildInputs = [ pkgs.jq pkgs.gzip ];
+            src = ./.;
+          } ''bash $src/test_checksum.sh; touch $out'';
+          flake = pkgs.runCommand "flake-check" {
+            nativeBuildInputs = [ pkgs.jq ];
+            src = ./.;
+          } ''bash $src/test_flake.sh; touch $out'';
+          health-check = pkgs.runCommand "health-check" {
+            nativeBuildInputs = [ pkgs.jq pkgs.gzip pkgs.curl ];
+            src = ./.;
+          } ''bash $src/test_health_check.sh; touch $out'';
         };
-
-        # §V.19 — devShell carrying every CI/local tool (incl. just), auto-loaded
-        # via .envrc (§V.51). set-and-setting wiring (§V.20) is the rest of T17.
-        devShells.default = pkgs.mkShell {
-          buildInputs = [
-            pkgs.just pkgs.bash pkgs.shellcheck pkgs.bats
-            pkgs.curl pkgs.jq pkgs.gzip pkgs.coreutils pkgs.gnugrep pkgs.findutils
-            pkgs.nix pkgs.vulnix pkgs.cachix
-            (set-and-setting.lib.mkSet {
-              inherit pkgs;
-              categories = [ "generic" "git" "nix" "security" ];
-            })
-            (set-and-setting.lib.mkSetting {
-              inherit pkgs;
-            })
-          ];
-          shellHook = ''
-            if [ -z "''${CI:-}" ]; then
-              sync-set
-              sync-setting
-            fi
-          '';
-        };
-      }
-    ) // {
-      nixosModules.default = { lib, pkgs, ... }: {
-        imports = [ ./nixos-module.nix ];
-        programs.vulnix-cache.package = lib.mkDefault
-          self.packages.${pkgs.stdenv.hostPlatform.system}.nvd-cache;
-      };
-    };
+      });
 }
