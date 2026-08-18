@@ -69,6 +69,10 @@
       in {
         packages.nvd-cache = nvdCache;
         packages.default = nvdCache;
+        # The shared guardrails workflow invokes the standard materialization
+        # output directly as `.#setting` on every target system. The value
+        # nested inside apps.confirm is not addressable as `.#setting`.
+        packages.setting = set-and-setting.lib.mkSetting { inherit pkgs; };
         # The shared guardrails workflow runs this consumer-facing acceptance
         # app after materializing the standard settings. Keep it at the flake
         # boundary so the repo satisfies the set-and-setting contract while
