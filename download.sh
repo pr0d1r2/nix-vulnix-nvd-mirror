@@ -206,7 +206,7 @@ download_with_retry() {
 # Seed public/ from the previously-published mirror (§V.37): the accumulated
 # timeline. Empty/unreachable prior state ⇒ bootstrap.
 seed_prior_state() {
-  local year feed found=0
+  local year feed found=0 expected=$((current_year - start_year + 1))
   for year in $(seq "$start_year" "$current_year"); do
     feed="nvdcve-2.0-${year}.json.gz"
     if curl -fsSL --retry 3 --retry-delay 10 --max-time 120 \
@@ -217,7 +217,10 @@ seed_prior_state() {
       rm -f "$outdir/$feed"
     fi
   done
-  if [ "$found" -eq 0 ]; then
+  # A partial publication is not a usable incremental base: treating missing
+  # buckets as empty would permanently discard their accumulated history.
+  if [ "$found" -ne "$expected" ]; then
+    rm -f "$outdir"/nvdcve-2.0-[0-9][0-9][0-9][0-9].json.gz
     is_bootstrap=1
   fi
 }
