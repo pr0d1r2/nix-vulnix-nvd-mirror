@@ -14,7 +14,7 @@ Beyond the raw feeds, this project also aims to publish a **pre-built vulnix cac
 4. `curl` invocations must use `--retry 3 --retry-delay 60 --max-time 300` for network resilience.
 5. All downloaded feeds land in the `public/` directory as `nvdcve-2.0-{year}.json.gz` files, **one for every in-window id-year** (`current-5…current`) plus `nvdcve-2.0-modified.json.gz` — a year with no CVEs yet is an empty-but-valid feed, so vulnix's request for any in-window year never 404s (§V.38).
 6. The GitHub Actions workflow runs daily at 04:00 UTC and supports manual `workflow_dispatch`.
-7. Deployment uses `force_orphan: true` so the `gh-pages` branch carries no history accumulation.
+7. Pages are published via the official GitHub Actions Pages artifact deployment; no `gh-pages` branch is used.
 8. The workflow has a 120-minute timeout to guard against hung downloads.
 9. The NVD API URL defaults to `https://services.nvd.nist.gov/rest/json/cves/2.0` and is overridable via `NVD_MIRROR_URL`.
 10. The workflow requires `contents: write` permission and uses `actions/checkout@v6` (SHA-pinned).
@@ -154,11 +154,14 @@ totalResults=24891
 - **Nix config:** `install-nix-action` sets `experimental-features = nix-command flakes` (needed by `nix build .#nvd-cache`).
 - **Steps (deploy job, after gate):**
   1. `download.sh` — seeds `public/` from the published mirror, merges the latest ≤120-day window (bootstraps if empty), uses `NVD_API_KEY` if set (§V.35–§V.39).
-  2. `peaceiris/actions-gh-pages@v4.1.0` (SHA-pinned) — deploys `./public` to GitHub Pages.
-  3. `health_check.sh` — post-deploy verification that the live Pages endpoint serves valid gzip feeds (T5).
-  4. Regenerate `feeds.lock` (`nix hash file --sri --type sha256` per `public/*.json.gz`) and **commit to `main`** — `git pull --rebase` first to avoid non-fast-forward; commit message carries `[skip ci]` as a backstop to `paths-ignore` (§V.26).
-  5. **Pre-seed feed FODs from local bytes:** `nix-store --add-fixed sha256 public/nvdcve-2.0-*.json.gz` — populates the exact flat-FOD store paths so the next build skips the lagging Pages fetch (§V.15a).
-  6. `nix build .#nvd-cache` — feed FODs already in store; `cachix-action` (`CACHIX_AUTH_TOKEN`) pushes the result to `pr0d1r2.cachix.org` (§V.22, §V.24); a retention step trims to ~7 days (§V.33).
+  2. `actions/upload-pages-artifact@v3` (SHA-pinned) — uploads `./public` as the Pages artifact.
+  3. `actions/deploy-pages@v4` (SHA-pinned) — publishes the artifact to GitHub Pages.
+  4. `health_check.sh` — post-deploy verification that the live Pages endpoint serves valid gzip feeds (T5).
+  5. Regenerate `feeds.lock` (`nix hash file --sri --type sha256` per `public/*.json.gz`) and **commit to `main`** — `git pull --rebase` first to avoid non-fast-forward; commit message carries `[skip ci]` as a backstop to `paths-ignore` (§V.26).
+  6. **Pre-seed feed FODs from local bytes:** `nix-store --add-fixed sha256 public/nvdcve-2.0-*.json.gz` — populates the exact flat-FOD store paths so the next build skips the lagging Pages fetch (§V.15a).
+  7. `nix build .#nvd-cache` — feed FODs already in store; `cachix-action` (`CACHIX_AUTH_TOKEN`) pushes the result to `pr0d1r2.cachix.org` (§V.22, §V.24); a retention step trims to ~7 days (§V.33).
+
+The repository owner must set **Settings → Pages → Source** to **GitHub Actions** before the first artifact deployment, then delete the legacy branch once that deployment succeeds with `git push origin --delete gh-pages`.
 
 ### GitHub Pages endpoint
 
@@ -349,7 +352,7 @@ RTK filter configuration (schema version 1, currently empty filters).
 | `x` | T7 | Migrate from NVD 2.0 JSON feeds to the NVD API 2.0 (CVE Change History API), as NIST has deprecated the legacy feed format |
 | `x` | T8 | Add concurrency control to the workflow to cancel in-progress runs when a new one starts |
 | `x` | T9 | Add error notification (e.g., GitHub Actions failure badge or Slack webhook) on download failures |
-| `x` | T10 | Pin `peaceiris/actions-gh-pages` to a specific SHA for supply-chain security |
+| `x` | T10 | Migrate Pages publishing to the official artifact deployment actions with SHA-pinned actions |
 | `x` | T11 | Add a `flake.nix` exposing `packages.<system>.nvd-cache` — a derivation that compiles the mirrored feeds into a pre-built vulnix database (`Data.fs`) store path, so consumers get zero-download and zero-compile |
 | `.` | T17 | **(pick first)** Scaffold `devShells.${system}.default` in `flake.nix` and wire [`set-and-setting`](https://github.com/pr0d1r2/set-and-setting): add the input, compose `set-and-setting.lib.mkSet` (`generic`/`git`/`nix`/`security`) + `lib.mkSetting` (`editorconfig`/`gitattributes`/`gitignore`/`markdownlint`/`yamllint`) plus every CI/local tool (`bash`/`shellcheck`/`bats`/`curl`/`jq`/`gzip`/`nix`/`vulnix`/`cachix`/`just`) into `buildInputs`, and run `sync-set` + `sync-setting` in `shellHook` (§V.19, §V.20). Ensure the composed `.gitignore` still ignores `public/` + `staging_dir` and keeps `feeds.lock` tracked (§V.42). Ship `.envrc` (`use flake`) for direnv auto-loading (§V.51) |
 | `.` | T15 | Adopt [`nixpkgs-lock`](https://github.com/pr0d1r2/nixpkgs-lock): change `flake.nix` inputs to `nixpkgs.follows = "nixpkgs-lock/nixpkgs"`, regenerate `flake.lock`, and add a daily cron workflow running `nix flake update nixpkgs-lock` that opens a PR only when the locked rev changes — unifying the nixpkgs version across the pr0d1r2 ecosystem (§V.18) |
