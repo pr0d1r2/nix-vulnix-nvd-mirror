@@ -75,6 +75,7 @@ jobs:
           fi
 
       - name: Deploy to GitHub Pages
+        id: upload
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: ./public
@@ -89,15 +90,23 @@ jobs:
 
       # Pull before editing the lock so a concurrent main update can rebase
       # cleanly. The workflow's concurrency group serializes mirror runs.
+      # deploy-pages can report failure after the new files are already live,
+      # so this runs whenever the artifact was uploaded and hashes the bytes
+      # Pages actually serves; the lock then always matches what consumers fetch.
       - name: Update feed lock
+        if: ${{ !cancelled() && steps.upload.outcome == 'success' }}
+        env:
+          PAGES_URL: https://pr0d1r2.github.io/nix-vulnix-nvd-mirror
         run: |
           git pull --rebase origin main
           tmp="$(mktemp)"
+          live="$(mktemp)"
           jq -n '{}' > "$tmp"
           for feed in public/nvdcve-2.0-*.json.gz; do
             key="${feed##*/nvdcve-2.0-}"
             key="${key%.json.gz}"
-            hash="$(nix hash file --sri --type sha256 "$feed")"
+            curl -fsSL --retry 5 --retry-delay 15 -o "$live" "$PAGES_URL/${feed##*/}"
+            hash="$(nix hash file --sri --type sha256 "$live")"
             jq --arg key "$key" --arg hash "$hash" \
               '. + {($key): $hash}' "$tmp" > "${tmp}.next"
             mv "${tmp}.next" "$tmp"
