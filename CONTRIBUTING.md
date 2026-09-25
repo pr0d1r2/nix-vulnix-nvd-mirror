@@ -10,7 +10,7 @@
 
 ## Repository layout
 
-```
+```text
 download.sh                  # Main NVD feed downloader
 health_check.sh              # Post-deploy feed verification
 test_download.sh             # Tests for download.sh
@@ -23,13 +23,15 @@ public/                      # Output directory (git-ignored)
 ## Development setup
 
 1. Clone the repository:
-   ```
+
+   ```sh
    git clone https://github.com/pr0d1r2/nix-vulnix-nvd-mirror.git
    cd nix-vulnix-nvd-mirror
    ```
 
 2. Verify prerequisites:
-   ```
+
+   ```sh
    bash --version
    shellcheck --version
    ```
@@ -38,7 +40,7 @@ public/                      # Output directory (git-ignored)
 
 Run all test suites:
 
-```
+```sh
 bash test_download.sh
 bash test_checksum.sh
 bash test_health_check.sh
@@ -51,7 +53,7 @@ Every test suite prints a pass/fail summary and exits non-zero on failure.
 
 All shell scripts must pass ShellCheck:
 
-```
+```sh
 shellcheck download.sh health_check.sh
 ```
 
@@ -59,19 +61,19 @@ CI runs this check before every deployment.
 
 ## Running the download locally
 
-```
+```sh
 bash download.sh
 ```
 
 Downloaded feeds land in `public/`. Override the NVD API URL with:
 
-```
+```sh
 NVD_MIRROR_URL=https://your-api.example.com/rest/json/cves/2.0 bash download.sh
 ```
 
 Optionally set an NVD API key to increase rate limits:
 
-```
+```sh
 NVD_API_KEY=your-key-here bash download.sh
 ```
 
