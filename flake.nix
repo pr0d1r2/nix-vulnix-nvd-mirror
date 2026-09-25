@@ -90,12 +90,22 @@
         };
         devShells = set-and-setting.lib.mkDevShells {
           inherit pkgs;
+          # Keep materialization.packages: it carries the lefthook-* wrappers
+          # the committed lefthook.yml invokes (SPEC §B.23). The rest is the
+          # CI/local toolchain SPEC §V.19 requires.
           basePackages = materialization.packages ++ [
             pkgs.bash
+            pkgs.bats
+            pkgs.cachix
+            pkgs.curl
+            pkgs.gzip
             pkgs.jq
+            pkgs.just
+            pkgs.nix
             pkgs.shellcheck
             pkgs.shfmt
             pkgs.typos
+            pkgs.vulnix
           ];
           settingHook = ''
             ${(set-and-setting.lib.mkSet { inherit pkgs; })}/bin/sync-set || true
