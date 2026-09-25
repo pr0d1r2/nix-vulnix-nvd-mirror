@@ -120,6 +120,45 @@ else
   fail "devShell must wire set-and-setting and sync standards"
 fi
 
+# ── Test 8c: devShell carries the full CI/local toolchain (SPEC §V.19) ─────
+
+for tool in bash shellcheck bats curl jq gzip nix vulnix cachix just; do
+  if grep -q "pkgs\.$tool\b" "$SCRIPT_DIR/flake.nix"; then
+    pass "devShell includes $tool"
+  else
+    fail "devShell is missing $tool"
+  fi
+done
+
+# ── Test 8d: devShell keeps the lefthook wrappers (SPEC §B.23, §B.25) ──────
+# lefthook.yml calls lefthook-* wrappers that only materialization.packages
+# provides; a hand-rolled devShell drops them and every hook exits 127.
+
+if grep -q 'basePackages = materialization.packages' "$SCRIPT_DIR/flake.nix"; then
+  pass "devShell keeps materialization.packages (lefthook wrappers)"
+else
+  fail "devShell must build on materialization.packages (lefthook wrappers)"
+fi
+
+# ── Test 8e: .gitignore guards generated output, not feeds.lock (§V.42) ────
+# Pure file checks: the flake-check sandbox copies the tree without .git.
+
+if grep -Fxq 'public/' "$SCRIPT_DIR/.gitignore" &&
+  grep -Fxq 'nvd-part/' "$SCRIPT_DIR/.gitignore" &&
+  ! grep -q 'feeds' "$SCRIPT_DIR/.gitignore"; then
+  pass ".gitignore ignores public/ and nvd-part/ but not feeds.lock"
+else
+  fail ".gitignore must ignore public/ and nvd-part/ but never feeds.lock"
+fi
+
+# ── Test 8f: direnv loads the default devShell (SPEC §V.51) ────────────────
+
+if grep -Fxq 'use flake' "$SCRIPT_DIR/.envrc"; then
+  pass ".envrc enables automatic flake loading"
+else
+  fail ".envrc must contain the line: use flake"
+fi
+
 # ── Test 9: flake.nix is valid Nix syntax ────────────────────────────────────
 
 if command -v nix &>/dev/null; then
