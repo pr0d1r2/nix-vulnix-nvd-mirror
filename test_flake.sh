@@ -134,7 +134,7 @@ done
 # lefthook.yml calls lefthook-* wrappers that only materialization.packages
 # provides; a hand-rolled devShell drops them and every hook exits 127.
 
-if grep -q 'basePackages = materialization.packages' "$SCRIPT_DIR/flake.nix"; then
+if grep -Eq 'basePackages = .*materialization\.packages' "$SCRIPT_DIR/flake.nix"; then
   pass "devShell keeps materialization.packages (lefthook wrappers)"
 else
   fail "devShell must build on materialization.packages (lefthook wrappers)"

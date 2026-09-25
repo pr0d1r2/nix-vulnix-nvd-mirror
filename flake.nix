@@ -66,6 +66,22 @@
           inherit pkgs;
           fragments = [ "base" "actions" "nix" "shell" "ascii" "markdown" "yaml" ];
         };
+        # The pinned set-and-setting builds lefthook-linter-coverage-full
+        # without substituting its awk-program placeholder, so the wrapper
+        # always dies with `gawk: cannot open source file` (SPEC §B.26).
+        # Rebuild it the way its own flake does and swap it in.
+        coverageSrc = set-and-setting.inputs.nix-lefthook-linter-coverage-src;
+        linterCoverage = pkgs.writeShellApplication {
+          name = "lefthook-linter-coverage-full";
+          runtimeInputs = [ pkgs.gawk pkgs.git pkgs.gnused ];
+          text = builtins.replaceStrings
+            [ "LEFTHOOK_LINTER_COVERAGE_AWK_PROGRAM_PATH" ]
+            [ "${coverageSrc}/linter-coverage.awk" ]
+            (builtins.readFile "${coverageSrc}/lefthook-linter-coverage-full.sh");
+        };
+        withFixedWrappers = wrappers:
+          builtins.filter (p: (p.name or "") != linterCoverage.name) wrappers
+          ++ [ linterCoverage ];
       in {
         packages.nvd-cache = nvdCache;
         packages.default = nvdCache;
@@ -93,7 +109,8 @@
           # Keep materialization.packages: it carries the lefthook-* wrappers
           # the committed lefthook.yml invokes (SPEC §B.23). The rest is the
           # CI/local toolchain SPEC §V.19 requires.
-          basePackages = materialization.packages ++ [
+          basePackages = withFixedWrappers materialization.packages ++ [
+            pkgs.actionlint
             pkgs.bash
             pkgs.bats
             pkgs.cachix
@@ -107,7 +124,10 @@
             pkgs.typos
             pkgs.vulnix
           ];
+          # lefthook-linter-coverage-full needs its doc path; nothing upstream
+          # sets it for this repo (SPEC §B.26).
           settingHook = ''
+            export LEFTHOOK_LINTER_COVERAGE_DOC=docs/linters.md
             ${(set-and-setting.lib.mkSet { inherit pkgs; })}/bin/sync-set || true
             ${(set-and-setting.lib.mkSetting { inherit pkgs; })}/bin/sync-setting || true
           '';
