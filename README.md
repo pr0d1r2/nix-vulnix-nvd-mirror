@@ -9,7 +9,7 @@ GitHub Pages mirror of NVD JSON feeds for use with
 
 For an ad-hoc scan that can tolerate downloading feeds, use the Pages mirror:
 
-```
+```sh
 vulnix --mirror https://pr0d1r2.github.io/nix-vulnix-nvd-mirror/ ./result
 ```
 
