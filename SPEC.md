@@ -1,5 +1,8 @@
 # SPEC — nix-vulnix-nvd-mirror
 
+<!-- §V/§B numbers are stable IDs, not a sequence: -->
+<!-- markdownlint-disable MD029 -->
+
 ## §D — Description
 
 A GitHub Pages mirror of NVD (National Vulnerability Database) JSON feeds for use with [vulnix](https://github.com/nix-community/vulnix), the Nix/NixOS vulnerability scanner. A daily GitHub Actions workflow fetches CVE data from the NVD API 2.0 (covering the last 6 years plus recently modified CVEs) and deploys them to GitHub Pages via force-push, providing a reliable, self-hosted mirror that avoids NVD rate limits and downtime. Target users are NixOS administrators and developers who run vulnix for vulnerability scanning.
@@ -88,9 +91,9 @@ bash download.sh
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | `NVD_MIRROR_URL` | env var | `https://services.nvd.nist.gov/rest/json/cves/2.0` | NVD API 2.0 base URL (set to override the default) |
-| `NVD_API_KEY` | env var | _(unset)_ | Optional NVD API key for higher rate limits (5→50 req/30s); sent as `apiKey:` header. Acquire at <https://nvd.nist.gov/developers/request-an-api-key> (form → one-time email activation link → UUID shown once), then store as the repo `NVD_API_KEY` secret (§V.27) |
+| `NVD_API_KEY` | env var | *(unset)* | Optional NVD API key for higher rate limits (5→50 req/30s); sent as `apiKey:` header. Acquire at <https://nvd.nist.gov/developers/request-an-api-key> (form → one-time email activation link → UUID shown once), then store as the repo `NVD_API_KEY` secret (§V.27) |
 | `NVD_RATE_DELAY` | env var | `6` | Seconds to wait between paginated API requests |
-| `NOTIFICATION_WEBHOOK_URL` | env var | _(unset)_ | Optional webhook URL for failure notifications (Slack-compatible JSON payload) |
+| `NOTIFICATION_WEBHOOK_URL` | env var | *(unset)* | Optional webhook URL for failure notifications (Slack-compatible JSON payload) |
 | `nvd_api_url` | string | `$NVD_MIRROR_URL` or default | Resolved NVD API base URL |
 | `outdir` | string | `public` | Output directory for downloaded feeds |
 | `current_year` | int | `$(date +%Y)` | Current calendar year |
@@ -359,7 +362,7 @@ RTK filter configuration (schema version 1, currently empty filters).
 | `x` | T19 | Add `checks.${system}` to `flake.nix` wrapping `shellcheck` + every `test_*.sh` as derivations, so `nix flake check` runs all verifications (§V.21) |
 | `x` | T20 | Add `.github/workflows/ci.yml` (push/PR/`workflow_call`): install Nix, **build** the devShell + each **named** check (`nix build .#devShells.${system}.default .#checks.${system}.{shellcheck,download,checksum,flake,health-check}` — no `.*` wildcard; pushed to `pr0d1r2.cachix.org` via `cachix-action` + `CACHIX_AUTH_TOKEN`, skip when absent), **then** `nix flake check --no-build`. Never builds `nvd-cache` (§V.21, §V.22, §V.23) |
 | `.` | T21 | Gate `mirror.yml` on `ci.yml`: add a `check` job `uses: ./.github/workflows/ci.yml` and set the deploy job `needs: check`, so feeds deploy only after `nix flake check` passes (§V.24) |
-| `x` | T23 | **Refactor `nvd-cache` for reproducibility:** drop `src = ./public`; model each feed as a flat fixed-output `pkgs.fetchurl` (path = `f(name,sha256)`), pin via committed `feeds.lock`, derive the feed list from `builtins.attrNames lock` (§V.15b), assemble with `linkFarm`. Same derivation hash for mirror/CI/consumer → Cachix substitute hits (§V.15, §V.15a, §V.26). **Fix the broken buildPhase** (§B.8): drop `pkgs.python3Packages.zodb`, serve `feedFarm` on loopback HTTP via a small handler that synthesizes empty feeds for absent in-range years (§V.46/§V.48), load an empty package manifest (§V.47), `… || true`, gate on `test -s Data.fs` (§V.45). **Commit `serve-feeds.py` and an initial real `feeds.lock` in the same PR** so the flake evaluates (§V.49). **Also update `test_flake.sh`** (Test 4 "feeds from public/" assertion is obsolete; keep Test 2's `packages.nvd-cache` grep matching) so the gated check stays green |
+| `x` | T23 | **Refactor `nvd-cache` for reproducibility:** drop `src = ./public`; model each feed as a flat fixed-output `pkgs.fetchurl` (path = `f(name,sha256)`), pin via committed `feeds.lock`, derive the feed list from `builtins.attrNames lock` (§V.15b), assemble with `linkFarm`. Same derivation hash for mirror/CI/consumer → Cachix substitute hits (§V.15, §V.15a, §V.26). **Fix the broken buildPhase** (§B.8): drop `pkgs.python3Packages.zodb`, serve `feedFarm` on loopback HTTP via a small handler that synthesizes empty feeds for absent in-range years (§V.46/§V.48), load an empty package manifest (§V.47), `… \|\| true`, gate on `test -s Data.fs` (§V.45). **Commit `serve-feeds.py` and an initial real `feeds.lock` in the same PR** so the flake evaluates (§V.49). **Also update `test_flake.sh`** (Test 4 "feeds from public/" assertion is obsolete; keep Test 2's `packages.nvd-cache` grep matching) so the gated check stays green |
 | `.` | T12 | In `mirror.yml` deploy job, after Pages deploy + `health_check.sh`: regenerate `feeds.lock` (SRI) and commit to `main` (`git pull --rebase`, `[skip ci]`); `nix-store --add-fixed sha256 public/*.json.gz` to pre-seed feed fixed-output derivations (§V.15a); `nix build .#nvd-cache`; push to `pr0d1r2.cachix.org` via `cachix-action`; trim to ~7 days (§V.16, §V.22, §V.24, §V.26, §V.33) |
 | `.` | T24 | Pass `NVD_API_KEY` secret as env to `download.sh` in `mirror.yml` for authenticated NVD rate limits; run still succeeds if absent (§V.27). Document acquisition (request form → email activation → UUID → repo secret) in `CONTRIBUTING.md`/`README.md` |
 | `.` | T22 | Add `nixConfig.extra-substituters` + `extra-trusted-public-keys` for `pr0d1r2.cachix.org` to `flake.nix` so trusting consumers substitute with zero compile; document the `--accept-flake-config`/trust requirement (§V.25) |
