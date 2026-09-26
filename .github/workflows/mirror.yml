@@ -26,6 +26,7 @@ jobs:
       contents: write
       pages: write
       id-token: write
+      pull-requests: write
     environment: github-pages
     env:
       CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -88,8 +89,9 @@ jobs:
         env:
           PAGES_URL: https://pr0d1r2.github.io/nix-vulnix-nvd-mirror
 
-      # Pull before editing the lock so a concurrent main update can rebase
-      # cleanly. The workflow's concurrency group serializes mirror runs.
+      # Regenerate the lock here, BEFORE the build, which reads it; it is
+      # committed at the end (Publish feed lock). Pull first so a concurrent main
+      # update can rebase cleanly. The workflow's concurrency group serializes mirror runs.
       # deploy-pages can report failure after the new files are already live,
       # so this runs whenever the artifact was uploaded and hashes the bytes
       # Pages actually serves; the lock then always matches what consumers fetch.
@@ -112,13 +114,6 @@ jobs:
             mv "${tmp}.next" "$tmp"
           done
           mv "$tmp" feeds.lock
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add feeds.lock
-          if ! git diff --cached --quiet; then
-            git commit -m 'chore: update feed lock [skip ci]'
-            git push origin HEAD:main
-          fi
 
       # fetchurl uses flat SHA-256 paths. Adding the freshly downloaded bytes
       # with the legacy flat-store command creates those exact paths, avoiding
@@ -138,3 +133,30 @@ jobs:
           cache_path="$(readlink -f result)"
           cachix push pr0d1r2 "$cache_path"
           cachix pin pr0d1r2 nvd-cache "$cache_path" --keep-days 7
+
+      # main is protected (a pull request is required, §B.27), so the lock
+      # lands through a PR this job opens and merges itself. It runs LAST: a
+      # refused lock update must never again skip the build and Cachix push.
+      # A PR opened with GITHUB_TOKEN triggers no workflow, and main requires
+      # no status check, so the merge is immediate. Needs the repository
+      # setting "Allow GitHub Actions to create and approve pull requests".
+      - name: Publish feed lock
+        if: ${{ !cancelled() && steps.upload.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add feeds.lock
+          if git diff --cached --quiet; then
+            echo "feeds.lock unchanged"
+            exit 0
+          fi
+          branch=bot/feeds-lock
+          git commit -m 'chore: update feed lock'
+          git push --force origin "HEAD:refs/heads/${branch}"
+          gh pr create --base main --head "$branch" \
+            --title 'chore: update feed lock' \
+            --body 'Automated: feeds.lock regenerated from the bytes Pages now serves.' ||
+            echo "a feed-lock PR is already open on ${branch}; it now carries this lock"
+          gh pr merge "$branch" --squash --delete-branch

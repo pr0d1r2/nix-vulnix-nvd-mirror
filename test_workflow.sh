@@ -39,4 +39,23 @@ if grep -Eq 'peaceiris/actions-gh-pages|force_orphan|gh-pages' "$workflow"; then
 fi
 echo "PASS: workflow has no gh-pages branch deployment"
 
+# §B.27: main is protected (a PR is required), so the lock lands through a PR
+# the workflow merges itself, and it lands AFTER the cache is published — a
+# refused lock push must never again skip the build and the Cachix push.
+if grep -Eq 'git push origin HEAD:main' "$workflow"; then
+  echo "FAIL: the lock must not be pushed straight to protected main" >&2
+  exit 1
+fi
+echo "PASS: the lock is not pushed straight to protected main"
+assert_contains "the lock lands through a pull request" 'gh pr create'
+assert_contains "the workflow merges its own lock pull request" 'gh pr merge'
+assert_contains "the job may open pull requests" 'pull-requests: write'
+lock_line="$(grep -n 'name: Publish feed lock' "$workflow" | cut -d: -f1)"
+pin_line="$(grep -n 'cachix pin' "$workflow" | cut -d: -f1)"
+if [ -z "$lock_line" ] || [ -z "$pin_line" ] || [ "$lock_line" -lt "$pin_line" ]; then
+  echo "FAIL: the lock is published after the cache, so its failure cannot skip it" >&2
+  exit 1
+fi
+echo "PASS: the lock is published after the cache"
+
 echo "Workflow regression checks passed"
