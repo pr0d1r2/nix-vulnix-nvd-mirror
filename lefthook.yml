@@ -2,6 +2,8 @@
 
 pre-commit:
   commands:
+    changelog-touched:
+      run: lefthook-changelog-touched
     gitleaks:
       run: lefthook-gitleaks {staged_files}
     git-conflict-markers:
@@ -10,10 +12,37 @@ pre-commit:
       run: lefthook-git-no-local-paths {staged_files}
     nix-flake-check:
       glob: "*.nix"
-      run: timeout ${LEFTHOOK_NIX_FLAKE_CHECK_TIMEOUT:-60} nix flake check
+      run: timeout ${LEFTHOOK_NIX_FLAKE_CHECK_TIMEOUT:-600} nix flake check
     actionlint:
       glob: ".github/workflows/*.{yml,yaml}"
       run: timeout ${LEFTHOOK_ACTIONLINT_TIMEOUT:-30} lefthook-actionlint {staged_files}
+    nixfmt:
+      glob: "*.nix"
+      run: lefthook-nixfmt {staged_files}
+    statix:
+      glob: "*.nix"
+      run: lefthook-statix {staged_files}
+    deadnix:
+      glob: "*.nix"
+      run: lefthook-deadnix {staged_files}
+    nix-no-embedded-shell:
+      glob: "*.nix"
+      run: lefthook-nix-no-embedded-shell {staged_files}
+    shellcheck:
+      glob: "*.sh"
+      run: lefthook-shellcheck {staged_files}
+    shfmt:
+      glob: "*.sh"
+      run: lefthook-shfmt {staged_files}
+    no-shell-functions:
+      glob: "*.sh"
+      run: lefthook-no-shell-functions {staged_files}
+    justfile-alphabetical:
+      glob: "{justfile,*.just}"
+      run: timeout ${LEFTHOOK_JUSTFILE_ALPHABETICAL_TIMEOUT:-30} nix-lefthook-justfile-alphabetical {staged_files}
+    justfile-no-embedded-shell:
+      glob: "{justfile,*.just}"
+      run: timeout ${LEFTHOOK_JUSTFILE_NO_EMBEDDED_SHELL_TIMEOUT:-30} nix-lefthook-justfile-no-embedded-shell {staged_files}
     unicode-lint:
       glob: "*"
       exclude: '\.(gif|png|jpg|jpeg|ico|webp|bmp|tiff|pdf|woff2?|ttf|eot|mp[34]|wav|ogg|zip|gz|tar|iso)$'
@@ -27,17 +56,47 @@ pre-commit:
     yamllint:
       glob: "*.{yml,yaml}"
       run: timeout ${LEFTHOOK_YAMLLINT_TIMEOUT:-30} lefthook-yamllint {staged_files}
+    taplo:
+      glob: "*.toml"
+      run: timeout ${LEFTHOOK_TAPLO_TIMEOUT:-30} lefthook-taplo {staged_files}
 
 pre-push:
   commands:
     linter-coverage:
       run: timeout ${LEFTHOOK_LINTER_COVERAGE_FULL_TIMEOUT:-30} lefthook-linter-coverage-full
     nix-flake-check:
-      glob: "*.nix"
-      run: timeout ${LEFTHOOK_NIX_FLAKE_CHECK_TIMEOUT:-60} nix flake check
+      # NO glob. `nix flake check` validates the WHOLE tree -- markdown, YAML,
+      # shell, dictionaries, the emitted lefthook config -- so gating it on
+      # `*.nix` let every non-nix change reach CI ungated by it. CI runs it
+      # unconditionally, which made green-local/red-CI structural for exactly
+      # the changes least likely to be suspected: a config edit, a doc, a
+      # fragment. Pre-commit keeps the glob; this is the gate before the push,
+      # and it costs what CI costs.
+      run: timeout ${LEFTHOOK_NIX_FLAKE_CHECK_TIMEOUT:-600} nix flake check
     actionlint:
       glob: ".github/workflows/*.{yml,yaml}"
       run: timeout ${LEFTHOOK_ACTIONLINT_TIMEOUT:-30} lefthook-actionlint {push_files}
+    nixfmt:
+      glob: "*.nix"
+      run: lefthook-nixfmt {push_files}
+    statix:
+      glob: "*.nix"
+      run: lefthook-statix {push_files}
+    deadnix:
+      glob: "*.nix"
+      run: lefthook-deadnix {push_files}
+    nix-no-embedded-shell:
+      glob: "*.nix"
+      run: lefthook-nix-no-embedded-shell {push_files}
+    shellcheck:
+      glob: "*.sh"
+      run: lefthook-shellcheck {push_files}
+    shfmt:
+      glob: "*.sh"
+      run: lefthook-shfmt {push_files}
+    no-shell-functions:
+      glob: "*.sh"
+      run: lefthook-no-shell-functions {push_files}
     markdownlint:
       glob: "*.md"
       run: timeout ${LEFTHOOK_MARKDOWNLINT_TIMEOUT:-30} lefthook-markdownlint {push_files}
@@ -47,3 +106,11 @@ pre-push:
     yamllint:
       glob: "*.{yml,yaml}"
       run: timeout ${LEFTHOOK_YAMLLINT_TIMEOUT:-30} lefthook-yamllint {push_files}
+    taplo:
+      glob: "*.toml"
+      run: timeout ${LEFTHOOK_TAPLO_TIMEOUT:-30} lefthook-taplo {push_files}
+
+commit-msg:
+  commands:
+    commit-msg-lint:
+      run: lefthook-commit-msg-lint {1}
