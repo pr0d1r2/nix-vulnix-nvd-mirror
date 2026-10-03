@@ -3,6 +3,38 @@ set -Eeuo pipefail
 
 workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/mirror.yml"
 ci_workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/ci.yml"
+lock_workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/nixpkgs-lock.yml"
+
+if grep -Eq -- "cron: '0 5 \* \* \*'" "$lock_workflow" &&
+  grep -Eq -- 'workflow_dispatch:' "$lock_workflow"; then
+  echo "PASS: nixpkgs-lock updater runs daily and supports manual dispatch"
+else
+  echo "FAIL: nixpkgs-lock updater trigger is incomplete" >&2
+  exit 1
+fi
+if grep -Eq -- 'nix flake update nixpkgs-lock' "$lock_workflow" &&
+  grep -Eq -- 'old_rev=' "$lock_workflow" &&
+  grep -Eq -- 'new_rev=' "$lock_workflow" &&
+  grep -Fq -- 'if [ "$old_rev" = "$new_rev" ]; then' "$lock_workflow"; then
+  echo "PASS: updater opens changes only when the locked revision changes"
+else
+  echo "FAIL: updater must gate PR creation on the locked revision" >&2
+  exit 1
+fi
+if grep -Eq -- 'gh pr create' "$lock_workflow" &&
+  grep -Eq -- 'pull-requests: write' "$lock_workflow"; then
+  echo "PASS: updater has permission to open a pull request"
+else
+  echo "FAIL: updater must open a pull request with pull-requests: write" >&2
+  exit 1
+fi
+if grep -Eq -- 'actions/checkout@[0-9a-f]{40}' "$lock_workflow" &&
+  grep -Eq -- 'cachix/install-nix-action@[0-9a-f]{40}' "$lock_workflow"; then
+  echo "PASS: updater actions are SHA-pinned"
+else
+  echo "FAIL: updater actions must be full SHA-pinned" >&2
+  exit 1
+fi
 
 assert_contains() {
   local description="$1" pattern="$2"
