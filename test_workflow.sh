@@ -15,7 +15,7 @@ fi
 if grep -Eq -- 'nix flake update nixpkgs-lock' "$lock_workflow" &&
   grep -Eq -- 'old_rev=' "$lock_workflow" &&
   grep -Eq -- 'new_rev=' "$lock_workflow" &&
-  grep -Fq -- 'if [ "$old_rev" = "$new_rev" ]; then' "$lock_workflow"; then
+  grep -Fq -- "if [ \"\$old_rev\" = \"\$new_rev\" ]; then" "$lock_workflow"; then
   echo "PASS: updater opens changes only when the locked revision changes"
 else
   echo "FAIL: updater must gate PR creation on the locked revision" >&2
