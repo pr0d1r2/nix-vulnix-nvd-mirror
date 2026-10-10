@@ -100,12 +100,14 @@ else
   fail "flake.nix must pin feeds as fixed-output fetchurl (sha256 from feeds.lock)"
 fi
 
-# ── Test 8: flake.nix has proper inputs (nixpkgs, flake-utils) ───────────────
+# ── Test 8: flake.nix has proper inputs (nixpkgs-lock, flake-utils) ──────────
 
-if grep -q 'nixpkgs.url' "$SCRIPT_DIR/flake.nix" && grep -q 'flake-utils.url' "$SCRIPT_DIR/flake.nix"; then
-  pass "flake.nix has nixpkgs and flake-utils inputs"
+if grep -q 'nixpkgs-lock.url' "$SCRIPT_DIR/flake.nix" &&
+  grep -q 'nixpkgs.follows = "nixpkgs-lock/nixpkgs"' "$SCRIPT_DIR/flake.nix" &&
+  grep -q 'flake-utils.url' "$SCRIPT_DIR/flake.nix"; then
+  pass "flake.nix follows nixpkgs through nixpkgs-lock and has flake-utils"
 else
-  fail "flake.nix missing required inputs"
+  fail "flake.nix missing nixpkgs-lock follow or flake-utils input"
 fi
 
 # ── Test 8b: devShell carries the standards toolchain (SPEC §V.20) ──────────

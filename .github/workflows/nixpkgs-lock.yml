@@ -1,0 +1,54 @@
+---
+name: Update nixpkgs lock
+
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31.10.6
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Update nixpkgs-lock
+        id: update
+        run: |
+          old_rev="$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)"
+          nix flake update nixpkgs-lock
+          new_rev="$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)"
+          if [ "$old_rev" = "$new_rev" ]; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo "nixpkgs revision unchanged: $new_rev"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+            echo "nixpkgs revision changed: $old_rev -> $new_rev"
+          fi
+
+      - name: Open pull request
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          branch=bot/nixpkgs-lock
+          git add flake.lock
+          git commit -m 'chore: update nixpkgs-lock'
+          git push --force origin "HEAD:refs/heads/$branch"
+          gh pr create --base main --head "$branch" \
+            --title 'chore: update nixpkgs-lock' \
+            --body 'Automated: update nixpkgs-lock and the ecosystem-wide nixpkgs revision.' ||
+            echo "a nixpkgs-lock PR is already open on $branch; it now carries this update"
