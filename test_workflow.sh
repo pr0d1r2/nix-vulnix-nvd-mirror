@@ -58,4 +58,19 @@ if [ -z "$lock_line" ] || [ -z "$pin_line" ] || [ "$lock_line" -lt "$pin_line" ]
 fi
 echo "PASS: the lock is published after the cache"
 
+lock_update_workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/nixpkgs-lock.yml"
+if ! grep -Eq "cron: '0 5 \* \* \*'" "$lock_update_workflow" ||
+  ! grep -Eq 'nix flake update nixpkgs-lock' "$lock_update_workflow" ||
+  ! grep -Eq "\.nodes\.nixpkgs\.locked\.rev" "$lock_update_workflow" ||
+  ! grep -Eq 'if: steps\.update\.outputs\.changed == '\''true'\''' "$lock_update_workflow" ||
+  ! grep -Eq 'gh pr create' "$lock_update_workflow"; then
+  echo "FAIL: nixpkgs-lock workflow must update daily and open a PR only on rev changes" >&2
+  exit 1
+fi
+if grep -Eq 'actions/(checkout|[^@]+)@(main|master|v[0-9])' "$lock_update_workflow"; then
+  echo "FAIL: nixpkgs-lock workflow contains an unpinned action" >&2
+  exit 1
+fi
+echo "PASS: nixpkgs-lock workflow updates and PR-gates on rev changes"
+
 echo "Workflow regression checks passed"
