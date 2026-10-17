@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/mirror.yml"
 ci_workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/ci.yml"
+lock_workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/update-nixpkgs-lock.yml"
 
 assert_contains() {
   local description="$1" pattern="$2"
@@ -57,5 +58,26 @@ if [ -z "$lock_line" ] || [ -z "$pin_line" ] || [ "$lock_line" -lt "$pin_line" ]
   exit 1
 fi
 echo "PASS: the lock is published after the cache"
+
+assert_lock_contains() {
+  local description="$1" pattern="$2"
+  if ! grep -Eq -- "$pattern" "$lock_workflow"; then
+    echo "FAIL: $description" >&2
+    exit 1
+  fi
+  echo "PASS: $description"
+}
+
+assert_lock_contains "nixpkgs lock updater has a daily schedule" "cron: '0 5 \* \* \*'"
+assert_lock_contains "nixpkgs lock updater supports manual runs" 'workflow_dispatch:'
+assert_lock_contains "nixpkgs lock updater runs the targeted flake update" 'nix flake update nixpkgs-lock'
+assert_lock_contains "nixpkgs lock updater compares locked revisions" 'nixpkgs-lock.*locked.*rev'
+assert_lock_contains "nixpkgs lock updater gates PR creation on a changed revision" "if: steps\.update\.outputs\.changed == 'true'"
+assert_lock_contains "nixpkgs lock updater creates a pull request" 'gh pr create'
+if grep -Eq 'uses: [^@]+@(main|master|v[0-9])([[:space:]]|$)' "$lock_workflow"; then
+  echo "FAIL: nixpkgs lock updater has an unpinned action" >&2
+  exit 1
+fi
+echo "PASS: nixpkgs lock updater actions are SHA-pinned"
 
 echo "Workflow regression checks passed"
