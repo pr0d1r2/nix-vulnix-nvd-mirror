@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/mirror.yml"
 ci_workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/ci.yml"
+lock_workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/nixpkgs-lock.yml"
 
 assert_contains() {
   local description="$1" pattern="$2"
@@ -57,5 +58,26 @@ if [ -z "$lock_line" ] || [ -z "$pin_line" ] || [ "$lock_line" -lt "$pin_line" ]
   exit 1
 fi
 echo "PASS: the lock is published after the cache"
+
+if grep -Eq -- "schedule:" "$lock_workflow" && grep -Eq -- "cron: '0 5 \* \* \*'" "$lock_workflow"; then
+  echo "PASS: nixpkgs-lock updater runs daily"
+else
+  echo "FAIL: nixpkgs-lock updater must run daily" >&2
+  exit 1
+fi
+if grep -Eq -- 'nix flake update nixpkgs-lock' "$lock_workflow" &&
+  grep -Eq -- 'before_rev' "$lock_workflow" &&
+  grep -Eq -- "changed == 'true'" "$lock_workflow"; then
+  echo "PASS: nixpkgs-lock updater opens PRs only for rev changes"
+else
+  echo "FAIL: nixpkgs-lock updater must gate PR creation on a rev change" >&2
+  exit 1
+fi
+if grep -Eq -- 'gh pr create' "$lock_workflow" && grep -Eq -- 'contents: write' "$lock_workflow"; then
+  echo "PASS: nixpkgs-lock updater can open a PR"
+else
+  echo "FAIL: nixpkgs-lock updater must open a PR with write permission" >&2
+  exit 1
+fi
 
 echo "Workflow regression checks passed"
