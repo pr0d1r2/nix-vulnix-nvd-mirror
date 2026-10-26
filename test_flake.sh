@@ -102,10 +102,12 @@ fi
 
 # ── Test 8: flake.nix has proper inputs (nixpkgs, flake-utils) ───────────────
 
-if grep -q 'nixpkgs.url' "$SCRIPT_DIR/flake.nix" && grep -q 'flake-utils.url' "$SCRIPT_DIR/flake.nix"; then
-  pass "flake.nix has nixpkgs and flake-utils inputs"
+if grep -Fq 'nixpkgs-lock.url = "github:pr0d1r2/nixpkgs-lock";' "$SCRIPT_DIR/flake.nix" &&
+  grep -Fq 'nixpkgs.follows = "nixpkgs-lock/nixpkgs";' "$SCRIPT_DIR/flake.nix" &&
+  grep -q 'flake-utils.url' "$SCRIPT_DIR/flake.nix"; then
+  pass "flake.nix follows nixpkgs-lock and has flake-utils"
 else
-  fail "flake.nix missing required inputs"
+  fail "flake.nix must follow nixpkgs-lock and have flake-utils"
 fi
 
 # ── Test 8b: devShell carries the standards toolchain (SPEC §V.20) ──────────
