@@ -159,4 +159,4 @@ jobs:
             --title 'chore: update feed lock' \
             --body 'Automated: feeds.lock regenerated from the bytes Pages now serves.' ||
             echo "a feed-lock PR is already open on ${branch}; it now carries this lock"
-          gh pr merge "$branch" --squash --delete-branch
+          gh pr merge "$branch" --merge --delete-branch
