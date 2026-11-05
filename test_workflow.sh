@@ -49,12 +49,12 @@ fi
 echo "PASS: the lock is not pushed straight to protected main"
 assert_contains "the lock lands through a pull request" 'gh pr create'
 assert_contains "the workflow merges its own lock pull request" 'gh pr merge'
-assert_contains "the lock uses the repository's supported merge strategy" 'gh pr merge.*--merge.*--delete-branch'
-if grep -Eq 'gh pr merge.*--squash' "$workflow"; then
-  echo "FAIL: the lock must not request the repository-disabled squash merge strategy" >&2
+assert_contains "the lock uses the repository's supported merge strategy" 'gh pr merge.*--rebase.*--delete-branch'
+if grep -Eq 'gh pr merge.*--merge|gh pr merge.*--squash' "$workflow"; then
+  echo "FAIL: the lock must not request a merge-commit strategy" >&2
   exit 1
 fi
-echo "PASS: the lock does not request squash merging"
+echo "PASS: the lock does not request a merge-commit strategy"
 assert_contains "the job may open pull requests" 'pull-requests: write'
 lock_line="$(grep -n 'name: Publish feed lock' "$workflow" | cut -d: -f1)"
 pin_line="$(grep -n 'cachix pin' "$workflow" | cut -d: -f1)"
