@@ -215,6 +215,21 @@ else
   fail "flake.nix must advertise the public nvd-cache substituter and signing key"
 fi
 
+# ── Test 15: nixpkgs lock carries the brotli security update ────────────────
+# nixpkgs-lock's nixos-26.05 branch contains brotli 1.2.1 starting at this
+# revision. Keep the lock regression visible even when the full Nix evaluator
+# is unavailable in the check sandbox.
+
+if [[ -f "$SCRIPT_DIR/flake.lock" ]] &&
+  jq -e '
+    .nodes.nixpkgs.locked.rev == "c56a87d8e41ce69bd2af57eb35dcc117a9dfca33" and
+    .nodes.nixpkgs.locked.narHash == "sha256-/cpdPHaySDIyCgZI6EWngiM6jK3YLUNzv1b7lTzy6Bk="
+  ' "$SCRIPT_DIR/flake.lock" >/dev/null 2>&1; then
+  pass "flake.lock pins nixpkgs with brotli 1.2.1"
+else
+  fail "flake.lock must pin the nixpkgs revision containing brotli 1.2.1"
+fi
+
 echo ""
 echo "Results: $passed passed, $failed failed"
 [ "$failed" -eq 0 ]
