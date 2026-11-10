@@ -216,18 +216,22 @@ else
 fi
 
 # ── Test 15: nixpkgs lock carries the brotli security update ────────────────
-# nixpkgs-lock's nixos-26.05 branch contains brotli 1.2.1 starting at the
-# revision below. Keep the lock regression visible even when the full Nix
-# evaluator is unavailable in the check sandbox, while allowing later fixes.
+# nixpkgs-lock's nixos-26.05 branch contains brotli 1.2.1 at this revision.
+# Check the immutable revision and narHash, not only lastModified: timestamps
+# do not identify the source tree and could let an unrelated revision pass.
+
+nixpkgs_brotli_rev='c56a87d8e41ce69bd2af57eb35dcc117a9dfca33'
+nixpkgs_brotli_nar_hash='sha256-/cpdPHaySDIyCgZI6EWngiM6jK3YLUNzv1b7lTzy6Bk='
 
 if [[ -f "$SCRIPT_DIR/flake.lock" ]] &&
   jq -e '
-    ([.nodes | to_entries[] | select(.key | test("^nixpkgs($|[-_])")) | .value.locked]
-      | length > 0 and all(.lastModified >= 1793865203))
-  ' "$SCRIPT_DIR/flake.lock" >/dev/null 2>&1; then
-  pass "flake.lock pins nixpkgs with the brotli 1.2.1 fix or newer"
+    .nodes.nixpkgs.locked
+    | .rev == $rev and .narHash == $nar_hash
+  ' --arg rev "$nixpkgs_brotli_rev" --arg nar_hash "$nixpkgs_brotli_nar_hash" \
+    "$SCRIPT_DIR/flake.lock" >/dev/null 2>&1; then
+  pass "flake.lock pins the nixpkgs revision containing the brotli 1.2.1 fix"
 else
-  fail "flake.lock must pin every nixpkgs node at the revision containing brotli 1.2.1 or newer"
+  fail "flake.lock must pin nixpkgs revision $nixpkgs_brotli_rev (brotli 1.2.1)"
 fi
 
 echo ""
