@@ -42,7 +42,13 @@ jobs:
           git add flake.lock
           git commit -m 'chore: update nixpkgs-lock'
           git push --force origin "HEAD:refs/heads/${branch}"
-          gh pr create --base main --head "$branch" \
-            --title 'chore: update nixpkgs-lock' \
-            --body 'Automated: update nixpkgs-lock and its pinned nixpkgs revision.' ||
+          existing_prs="$(gh pr list --base main --head "$branch" --state open \
+            --json number,isCrossRepository \
+            --jq '.[] | select(.isCrossRepository == false) | .number')"
+          if [ -n "$existing_prs" ]; then
             echo "a nixpkgs-lock PR is already open on ${branch}; it now carries this update"
+          else
+            gh pr create --base main --head "$branch" \
+              --title 'chore: update nixpkgs-lock' \
+              --body 'Automated: update nixpkgs-lock and its pinned nixpkgs revision.'
+          fi
