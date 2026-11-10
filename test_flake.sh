@@ -225,8 +225,8 @@ nixpkgs_brotli_nar_hash='sha256-/cpdPHaySDIyCgZI6EWngiM6jK3YLUNzv1b7lTzy6Bk='
 
 if [[ -f "$SCRIPT_DIR/flake.lock" ]] &&
   jq -e '
-    .nodes.nixpkgs.locked
-    | .rev == $rev and .narHash == $nar_hash
+    [.nodes[] | .locked | select(.owner == "NixOS" and .repo == "nixpkgs")]
+    | length > 0 and all(.[]; .rev == $rev and .narHash == $nar_hash)
   ' --arg rev "$nixpkgs_brotli_rev" --arg nar_hash "$nixpkgs_brotli_nar_hash" \
     "$SCRIPT_DIR/flake.lock" >/dev/null 2>&1; then
   pass "flake.lock pins the nixpkgs revision containing the brotli 1.2.1 fix"
