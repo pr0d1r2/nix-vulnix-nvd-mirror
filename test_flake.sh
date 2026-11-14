@@ -100,12 +100,14 @@ else
   fail "flake.nix must pin feeds as fixed-output fetchurl (sha256 from feeds.lock)"
 fi
 
-# ── Test 8: flake.nix has proper inputs (nixpkgs, flake-utils) ───────────────
+# ── Test 8: flake.nix has proper inputs (nixpkgs-lock, flake-utils) ──────────
 
-if grep -q 'nixpkgs.url' "$SCRIPT_DIR/flake.nix" && grep -q 'flake-utils.url' "$SCRIPT_DIR/flake.nix"; then
-  pass "flake.nix has nixpkgs and flake-utils inputs"
+if grep -q 'nixpkgs-lock.url' "$SCRIPT_DIR/flake.nix" &&
+  grep -q 'nixpkgs.follows = "nixpkgs-lock/nixpkgs"' "$SCRIPT_DIR/flake.nix" &&
+  grep -q 'flake-utils.url' "$SCRIPT_DIR/flake.nix"; then
+  pass "flake.nix has nixpkgs-lock, follows nixpkgs through it, and has flake-utils"
 else
-  fail "flake.nix missing required inputs"
+  fail "flake.nix must declare nixpkgs-lock, route nixpkgs through it, and declare flake-utils"
 fi
 
 # ── Test 8b: devShell carries the standards toolchain (SPEC §V.20) ──────────
@@ -215,23 +217,16 @@ else
   fail "flake.nix must advertise the public nvd-cache substituter and signing key"
 fi
 
-# ── Test 15: nixpkgs lock carries the brotli security update ────────────────
-# nixpkgs-lock's nixos-26.05 branch contains brotli 1.2.1 at this revision.
-# Check the immutable revision and narHash, not only lastModified: timestamps
-# do not identify the source tree and could let an unrelated revision pass.
-
-nixpkgs_brotli_rev='c56a87d8e41ce69bd2af57eb35dcc117a9dfca33'
-nixpkgs_brotli_nar_hash='sha256-/cpdPHaySDIyCgZI6EWngiM6jK3YLUNzv1b7lTzy6Bk='
+# ── Test 15: nixpkgs is unified through nixpkgs-lock (§V.18) ────────────────
 
 if [[ -f "$SCRIPT_DIR/flake.lock" ]] &&
   jq -e '
-    [.nodes[] | .locked | select(.owner == "NixOS" and .repo == "nixpkgs")]
-    | length > 0 and all(.[]; .rev == $rev and .narHash == $nar_hash)
-  ' --arg rev "$nixpkgs_brotli_rev" --arg nar_hash "$nixpkgs_brotli_nar_hash" \
-    "$SCRIPT_DIR/flake.lock" >/dev/null 2>&1; then
-  pass "flake.lock pins the nixpkgs revision containing the brotli 1.2.1 fix"
+    .nodes.root.inputs.nixpkgs == ["nixpkgs-lock", "nixpkgs"] and
+    .nodes["nixpkgs-lock"].inputs.nixpkgs == "nixpkgs"
+  ' "$SCRIPT_DIR/flake.lock" >/dev/null 2>&1; then
+  pass "flake.lock follows nixpkgs through nixpkgs-lock"
 else
-  fail "flake.lock must pin nixpkgs revision $nixpkgs_brotli_rev (brotli 1.2.1)"
+  fail "flake.lock must route nixpkgs through nixpkgs-lock"
 fi
 
 echo ""

@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/mirror.yml"
 ci_workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/ci.yml"
+lock_workflow="$(cd "$(dirname "$0")" && pwd)/.github/workflows/update-nixpkgs-lock.yml"
 
 assert_contains() {
   local description="$1" pattern="$2"
@@ -63,5 +64,26 @@ if [ -z "$lock_line" ] || [ -z "$pin_line" ] || [ "$lock_line" -lt "$pin_line" ]
   exit 1
 fi
 echo "PASS: the lock is published after the cache"
+
+for pattern in \
+  "cron: '0 5 * * *'" \
+  'nix flake update nixpkgs-lock' \
+  'old_rev=' \
+  'new_rev=' \
+  'gh pr create' \
+  'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10' \
+  'cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3'; do
+  if ! grep -Fq -- "$pattern" "$lock_workflow"; then
+    echo "FAIL: nixpkgs-lock workflow missing $pattern" >&2
+    exit 1
+  fi
+done
+echo "PASS: nixpkgs-lock workflow updates only changed locks and opens PRs"
+
+if grep -Eq '@(main|master|v[0-9])([[:space:]]|$)' "$lock_workflow"; then
+  echo "FAIL: nixpkgs-lock workflow has an unpinned action" >&2
+  exit 1
+fi
+echo "PASS: nixpkgs-lock workflow actions are SHA-pinned"
 
 echo "Workflow regression checks passed"
